@@ -1,0 +1,27 @@
+# AGENTS.md
+
+このリポジトリで作業する AI（Codex）へ。
+
+## 最初に読む
+
+`DESIGN.md` が実装の正本。**着手前に全文を読む。**
+
+## 守ること
+
+1. **Phase を飛ばさない。** `DESIGN.md` §18 の順に進め、前の Phase の合格条件を満たすまで次へ行かない
+2. **`DESIGN.md` §2 の確定事項を再検討しない**（Codex CLI / faster-whisper / Web Speech API / commit しない / 外出先なし）
+3. **§3 の非目標を作らない。**「ついでに」も禁止
+4. **Obsidian Vault のファイルをこのリポジトリへコピーしない。** サーバーは `VAULT_PATH` の実パスを参照する
+5. Vault へ書き込むコードを書くときは Vault 側 `_kit/AI_RULES.md` を読む。削除・移動・改名は実装しない
+6. 既存ファイルを変更する前に `git status` で状態を確認する
+7. AI API を呼ぶコードを書かない。手拍子検出・音声認識・読み上げはローカル処理のみ
+8. 秘密情報を `.env.example` に書かない。実値は `.env`（gitignore 対象）へ
+
+## 対象環境
+
+PC は CachyOS（シェルは fish）、端末は iPhone 13 Pro の Safari / PWA。
+同一 Wi-Fi 内のみ。インターネットへポートを開放しない。
+
+## 迷ったとき
+
+`DESIGN.md` に書いていない仕様が必要になったら、**推測で実装せず質問する。**

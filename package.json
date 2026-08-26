@@ -1,0 +1,1 @@
+{"private":true,"scripts":{"dev":"npm --workspace apps/iphone-ui run dev","build":"npm --workspace apps/iphone-ui run build","test":"npm --workspace apps/iphone-ui run test"},"workspaces":["apps/iphone-ui"]}
