@@ -11,6 +11,11 @@ export class ReconnectingSocket {
 
   start(): void { this.stopped = false; this.connect(); }
   stop(): void { this.stopped = true; window.clearTimeout(this.timer); window.clearInterval(this.heartbeat); this.socket?.close(); }
+  send(message: object): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.socket.send(JSON.stringify(message));
+    return true;
+  }
 
   private connect(): void {
     if (this.stopped) return;
@@ -24,8 +29,9 @@ export class ReconnectingSocket {
     });
     socket.addEventListener("close", () => {
       window.clearInterval(this.heartbeat);
+      if (this.stopped || this.socket !== socket) return;
       this.onStatus("closed");
-      if (!this.stopped) this.timer = window.setTimeout(() => this.connect(), Math.min(1000 * 2 ** this.retry++, 30000));
+      this.timer = window.setTimeout(() => this.connect(), Math.min(1000 * 2 ** this.retry++, 30000));
     });
     socket.addEventListener("error", () => socket.close());
   }

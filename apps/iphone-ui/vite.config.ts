@@ -8,13 +8,29 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, root, "");
   const cert = path.resolve(root, env.TLS_CERT || "certs/lan.crt");
   const key = path.resolve(root, env.TLS_KEY || "certs/lan.key");
+  const https = fs.existsSync(cert) && fs.existsSync(key) ? { cert: fs.readFileSync(cert), key: fs.readFileSync(key) } : undefined;
+  const host = env.HOST || "127.0.0.1";
+  const proxy = {
+    "/ws": {
+      target: `wss://${host}:${env.PORT || "8787"}`,
+      ws: true,
+      secure: false,
+    },
+  };
   return {
     envDir: root,
     plugins: [react()],
     server: {
-      host: env.HOST || "127.0.0.1",
+      host,
       port: 5173,
-      https: fs.existsSync(cert) && fs.existsSync(key) ? { cert: fs.readFileSync(cert), key: fs.readFileSync(key) } : undefined,
+      https,
+      proxy,
+    },
+    preview: {
+      host,
+      port: 5173,
+      https,
+      proxy,
     },
   };
 });

@@ -1,10 +1,14 @@
 from contextlib import asynccontextmanager
+import logging
 from time import monotonic_ns
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import Settings
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 def timestamp_ms() -> int:
@@ -45,6 +49,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 message = await socket.receive_json()
                 if message.get("type") == "connection.ping":
                     await socket.send_json({"type": "connection.pong", "ts": timestamp_ms()})
+                elif message.get("type") == "clap.candidate":
+                    logger.info(
+                        "[WAKE] rms=%.3f hf=%.2f rise=%dms accepted=%s reason=%s",
+                        float(message.get("rms", 0)),
+                        float(message.get("hfRatio", 0)),
+                        int(message.get("riseMs", 0)),
+                        bool(message.get("accepted", False)),
+                        str(message.get("reason", "unknown")),
+                    )
         except WebSocketDisconnect:
             return
 

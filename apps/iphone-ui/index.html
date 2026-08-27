@@ -10,5 +10,27 @@
     <link rel="apple-touch-icon" href="/assets/icon.svg" />
     <title>JARVIS Secretary</title>
   </head>
-  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+  <body>
+    <div id="boot-status" style="box-sizing:border-box;min-height:100vh;padding:2rem;background:#070811;color:#e8ecff;font:16px system-ui">JARVISを読み込んでいます…</div>
+    <div id="root"></div>
+    <script>
+      function showBootError(message) {
+        var status = document.getElementById("boot-status");
+        if (!status) return;
+        status.textContent = "起動エラー: " + message;
+        status.style.color = "#ff9b9b";
+      }
+      window.addEventListener("error", function (event) {
+        showBootError(event.message || "JavaScriptを読み込めませんでした");
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        showBootError(String(event.reason || "初期化に失敗しました"));
+      });
+      window.setTimeout(function () {
+        var root = document.getElementById("root");
+        if (root && !root.childElementCount) showBootError("画面モジュールが起動しませんでした");
+      }, 5000);
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

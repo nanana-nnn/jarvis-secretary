@@ -7,3 +7,7 @@ __pycache__/
 dist/
 *.tsbuildinfo
 *.egg-info/
+
+# 作業中のバックアップ
+.asset-backup/
+*.bak

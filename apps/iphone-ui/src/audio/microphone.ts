@@ -8,7 +8,7 @@ export class ClapMicrophone {
   async start(): Promise<void> {
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false });
     this.context = new AudioContext();
-    await this.context.audioWorklet.addModule(new URL("./clap-worklet.ts", import.meta.url));
+    await this.context.audioWorklet.addModule("/clap-worklet.js");
     const source = this.context.createMediaStreamSource(this.stream);
     const worklet = new AudioWorkletNode(this.context, "clap-metrics");
     const silent = this.context.createGain(); silent.gain.value = 0;
