@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#070811" />
+    <meta name="theme-color" content="#0d0b0a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -11,14 +11,14 @@
     <title>JARVIS Secretary</title>
   </head>
   <body>
-    <div id="boot-status" style="box-sizing:border-box;min-height:100vh;padding:2rem;background:#070811;color:#e8ecff;font:16px system-ui">JARVISを読み込んでいます…</div>
+    <div id="boot-status" style="box-sizing:border-box;min-height:100vh;padding:2rem;background:#0d0b0a;color:#efe7da;font:16px system-ui">JARVISを読み込んでいます…</div>
     <div id="root"></div>
     <script>
       function showBootError(message) {
         var status = document.getElementById("boot-status");
         if (!status) return;
         status.textContent = "起動エラー: " + message;
-        status.style.color = "#ff9b9b";
+        status.style.color = "#d8354c";
       }
       window.addEventListener("error", function (event) {
         showBootError(event.message || "JavaScriptを読み込めませんでした");

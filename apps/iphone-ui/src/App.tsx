@@ -10,6 +10,13 @@ import type { SecretaryEvent, SecretaryState } from "./states/types";
 
 const WAKE_ANIM_MS = 250, LISTEN_IDLE_MS = 8000;
 const labels: Record<SecretaryState, string> = { BOOTING:"CONNECTING",SLEEP:"STANDBY",WAKING:"AWAKENING",LISTENING:"LISTENING",TRANSCRIBING:"TRANSCRIBING",THINKING:"THINKING",APPROVAL:"APPROVAL REQUIRED",SPEAKING:"RESPONDING",ERROR:"SYSTEM ERROR",OFFLINE:"OFFLINE" };
+// 状態の説明は日本語1行だけ。latin と同じ行に混ぜない（design.md）
+const notes: Record<SecretaryState, string> = {
+  BOOTING:"PCに接続しています", SLEEP:"目を閉じて、指の音だけを聴いています", WAKING:"起きます",
+  LISTENING:"はい、どうしました？", TRANSCRIBING:"聞き取っています", THINKING:"考えています",
+  APPROVAL:"書き込む前に確認してください", SPEAKING:"答えています",
+  ERROR:"復帰を試みています", OFFLINE:"PCと未接続です。再接続を続けています",
+};
 
 function loadClapSettings(): ClapSettings {
   try {
@@ -60,21 +67,44 @@ export default function App() {
   }, [state]);
   async function enableMic() { try { await microphone.start(); setMic("on"); } catch { setMic("denied"); send("SYSTEM_ERROR"); } }
 
-  return <main className={`${state === "SLEEP" ? "sleep " : ""}state-${state.toLowerCase()}`}>
-    <div className="hud" aria-hidden="true">
-      <div className="orbital orbital-a" /><div className="orbital orbital-b" /><div className="orbital orbital-c" />
-      <div className="reticle"><i /><i /><i /><i /></div>
-      <div className="pulse-core" /><div className="scan-beam" />
-    </div>
-    <section className="panel"><header><span className={`dot ${state === "OFFLINE" ? "off" : ""}`} />AI SECRETARY / LIVE RESPONSE</header>
-      <div className="eyebrow">COGNITIVE INTERFACE · 01</div>
-      <h1>{state === "SLEEP" ? "STANDBY" : labels[state]}</h1>
-      <div className="state-rule"><span>{labels[state]}</span><b /></div>
-      <p>{mic === "on" ? "指を鳴らすのを待っています" : mic === "denied" ? "マイクを許可してください" : "最初にマイクを有効にしてください"}</p>
-      {mic !== "on" && <button onClick={enableMic}>マイクを有効にする</button>}
-      <button className="secondary" onClick={() => setDebug(x => !x)}>検出ログ {debug ? "を閉じる" : "を開く"}</button>
-      {debug && <DebugPanel logs={logs} settings={settings} onSettings={setSettings} />}
-      <footer>JARVIS SYSTEM <span>LOCAL / SECURE</span></footer>
-    </section><Secretary state={state} />
+  // 開発時のみ ?state=LISTENING で任意の状態を描画する（配線は変えず見た目だけ差し替える）
+  const params = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
+  const preview = params?.get("state")?.toUpperCase() as SecretaryState | undefined;
+  const view = preview && preview in labels ? preview : state;
+  const showDebug = debug || params?.get("debug") === "1";
+  const live = view !== "OFFLINE" && view !== "ERROR" && view !== "BOOTING";
+  const last = logs.at(-1);
+
+  return <main className={`state-${view.toLowerCase()}`}>
+    <Secretary state={view} />
+
+    <section className="console">
+      <header className="rail">
+        <span className={`beacon ${live ? "" : "cold"}`} aria-hidden="true" />
+        <span className="rail-name">JARVIS SECRETARY</span>
+        <span className="rail-tail">LAN ONLY</span>
+      </header>
+
+      <div className="readout">
+        <h1>{labels[view]}</h1>
+        <div className="tick" aria-hidden="true" />
+        <p>{notes[view]}</p>
+      </div>
+
+      <dl className="gauges">
+        <div><dt>RATIO</dt><dd>{settings.ratio.toFixed(1)}</dd></div>
+        <div><dt>HF</dt><dd>{settings.hfMin.toFixed(2)}</dd></div>
+        <div><dt>MODE</dt><dd>{settings.mode.toUpperCase()}</dd></div>
+        <div><dt>LAST RMS</dt><dd>{last ? last.rms.toFixed(3) : "—"}</dd></div>
+      </dl>
+
+      <div className="actions">
+        {mic !== "on" && <button className="key" onClick={enableMic}>マイクを有効にする</button>}
+        {mic === "denied" && <span className="warn">マイクが拒否されています</span>}
+        <button className="ghost" onClick={() => setDebug(x => !x)}>{debug ? "ログを閉じる" : "検出ログ"}</button>
+      </div>
+    </section>
+
+    {showDebug && <DebugPanel logs={logs} settings={settings} onSettings={setSettings} />}
   </main>;
 }
