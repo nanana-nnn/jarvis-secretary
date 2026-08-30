@@ -4,6 +4,7 @@ import { ClapDetector } from "./audio/clap-detector";
 import { ClapMicrophone } from "./audio/microphone";
 import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
 import { DebugPanel } from "./components/DebugPanel";
+import { Fetch, type Facts } from "./components/Fetch";
 import { LavaCore } from "./components/LavaCore";
 import { transition } from "./states/machine";
 import type { SecretaryEvent, SecretaryState } from "./states/types";
@@ -16,7 +17,7 @@ const LISTEN_IDLE_MS = 8000;
 // サーバーから来る差し色を検査する。信頼せずに形だけ見る。
 const HEX = /^#[0-9a-f]{6}$/i;
 
-type Telemetry = { load: number; memory: number; uptime: string; host: string };
+type Telemetry = Facts & { host: string };
 type Scheme = {
   mode: "light" | "dark";
   background: string;
@@ -60,12 +61,6 @@ const copy: Record<SecretaryState, StateCopy> = {
   OFFLINE:      { en: "LINK OFFLINE",  code: "NET.91" },
 };
 
-// caelestia のロゴと同じ斜体端末風の字形・密度で JARVIS を表示する（DESIGN.md §15.1）
-const ASCII_JARVIS = `     __  ___    ____ _    _______ _____
- __ / / /   |  / __ \\ |  / /  _/ ___/
-/ // / / /| | / /_/ / | / // / \\__ \\
-\\___/ /_/  |_/_/ |_| |___/___/____/`;
-
 // 手拍子の閾値は端末内に持つ。hfMin と mode は毎回上書きする
 // （2026-08-26 に指パッチン1回へ変更した値で、保存済みの古い設定に負けないようにするため）。
 function loadClapSettings(): ClapSettings {
@@ -90,8 +85,10 @@ export default function App() {
   const [mic, setMic] = useState<"idle" | "on" | "denied">("idle");
   const [logs, setLogs] = useState<ClapLog[]>([]);
   const [debug, setDebug] = useState(false);
-  // 実測値が届くまでの初期値。数字を作らないので load/memory は 0、uptime は「—」
-  const [telemetry, setTelemetry] = useState<Telemetry>({ load: 0, memory: 0, uptime: "—", host: "JARVIS" });
+  // 実測値が届くまでの初期値。数字を作らないので、届いていない項目は「…」のままにする
+  const [telemetry, setTelemetry] = useState<Telemetry>({
+    kernel: "…", uptime: "…", shell: "…", mem: "…", pkgs: 0, user: "…", hname: "…", distro: "…", host: "JARVIS",
+  });
   const [settings, setSettings] = useState<ClapSettings>(loadClapSettings);
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
@@ -125,7 +122,7 @@ export default function App() {
       },
       message => {
         if (!message || typeof message !== "object") return;
-        const event = message as { type?: unknown; scheme?: unknown; load?: unknown; memory?: unknown; uptime?: unknown; host?: unknown };
+        const event = message as Record<string, unknown>;
 
         // 壁紙を替えると caelestia の scheme.json が作り直され、
         // mode と必要な Material token 一式が届く。CSS 変数は html に反映する。
@@ -141,14 +138,20 @@ export default function App() {
           }
         }
 
-        // PC の実測値（5秒間隔）。数値が揃っていないメッセージは捨てる
-        if (event.type === "system.telemetry" && typeof event.load === "number" && typeof event.memory === "number") {
-          setTelemetry({
-            load: event.load,
-            memory: event.memory,
-            uptime: String(event.uptime ?? "—"),
-            host: String(event.host ?? "JARVIS"),
-          });
+        // PC の実測値（5秒間隔）。届いた項目だけ差し替え、欠けていれば前の値を残す
+        if (event.type === "system.telemetry") {
+          const text = (key: string, fallback: string) => typeof event[key] === "string" ? event[key] as string : fallback;
+          setTelemetry(previous => ({
+            kernel: text("kernel", previous.kernel),
+            uptime: text("uptime", previous.uptime),
+            shell: text("shell", previous.shell),
+            mem: text("mem", previous.mem),
+            pkgs: typeof event.pkgs === "number" ? event.pkgs : previous.pkgs,
+            user: text("user", previous.user),
+            hname: text("hname", previous.hname),
+            distro: text("distro", previous.distro),
+            host: text("host", previous.host),
+          }));
         }
       },
     );
@@ -195,13 +198,7 @@ export default function App() {
   const showDebug = debug || params?.get("debug") === "1";
 
   return <main className={`shell state-${view.toLowerCase()}`}>
-    <header className="topbar">
-      <pre className="ascii-logo" aria-label="JARVIS">{ASCII_JARVIS}</pre>
-      <div className={`pc-link ${connected ? "online" : ""}`}>
-        <span className="signal" />
-        <div><strong>{connected ? "LINKED" : "OFFLINE"}</strong><small>{telemetry.host.toUpperCase()}</small></div>
-      </div>
-    </header>
+    <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} />
 
     <section className="core-stage">
       <LavaCore state={view} />

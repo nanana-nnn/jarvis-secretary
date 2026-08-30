@@ -19,16 +19,15 @@ button, input { font: inherit; color: inherit }
 }
 .shell:before { content: ""; position: absolute; inset: 8px; z-index: -1; pointer-events: none; border: 1px solid color-mix(in srgb, var(--scheme-outline) 70%, transparent); border-radius: 24px; box-shadow: inset 0 0 25px color-mix(in srgb, var(--scheme-primary) 7%, transparent) }
 .shell:after { content: ""; position: absolute; left: 30px; right: 30px; bottom: 9px; height: 2px; background: repeating-linear-gradient(90deg, var(--scheme-primary) 0 14px, transparent 14px 25px); opacity: .75 }
-.topbar { display: flex; align-items: center; justify-content: space-between; padding: 1px 7px 8px; border-bottom: 1px solid color-mix(in srgb, var(--scheme-outline) 62%, transparent) }
-.ascii-logo { margin: 0; color: var(--scheme-primary); font: 700 clamp(6px, 1.7vw, 9px)/1.25 var(--mono); white-space: pre; letter-spacing: -.02em }
-.pc-link { font: 700 7px/1 var(--mono); letter-spacing: .14em }
-.pc-link small { color: var(--scheme-muted) }
-.pc-link { display: flex; align-items: center; gap: 7px; text-align: right; opacity: .58 }
-.pc-link.online { opacity: 1 }
-.pc-link .signal { width: 6px; height: 6px; border-radius: 50%; background: var(--scheme-outline) }
-.pc-link.online .signal { background: var(--scheme-primary); box-shadow: 0 0 10px var(--scheme-primary) }
-.pc-link div { display: flex; flex-direction: column; gap: 3px }
-.pc-link strong { color: var(--scheme-primary) }
+/* fastfetch表示。ロゴは37桁のASCIIアートなので、字送りが最も広いフォント(0.6em)でも
+   画面幅に収まるサイズで頭打ちにする（37 * 0.6 * 16px = 355px < 358px）*/
+.fetch { display: grid; justify-items: center; gap: 7px; padding: 2px 0 2px }
+.fetch-logo { margin: 0; color: var(--scheme-primary); font: 700 clamp(9px, 4.1vw, 16px)/1.16 var(--mono); white-space: pre }
+/* 枠は罫線文字でなく border で描く（フォント差で桁がずれないように）*/
+.fetch-box { width: 100%; margin: 0; padding: 7px 11px; border: 1px solid color-mix(in srgb, var(--scheme-outline) 75%, transparent); border-radius: 12px; font: 500 clamp(9px, 2.9vw, 12px)/1.65 var(--mono) }
+.fetch-box div { display: grid; grid-template-columns: auto 1fr; gap: 10px }
+.fetch-box dt { color: var(--scheme-muted) }
+.fetch-box dd { margin: 0; text-align: right; color: var(--scheme-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .core-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden }
 /* 実物の dots パネル(620x340px)と同じ比率。グリッドは 69x34 でセルが 9:10 になる */
 .lava-core { width: 100%; aspect-ratio: 621 / 340; max-height: 100%; display: block }

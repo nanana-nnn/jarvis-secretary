@@ -1,9 +1,12 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from functools import lru_cache
 import json
 import logging
 import os
 from pathlib import Path
+import platform
+import pwd
 import re
 import socket as system_socket
 from time import monotonic_ns
@@ -66,19 +69,70 @@ def scheme_event(path: Path) -> dict[str, object]:
     return {"type": "scheme.changed", "scheme": read_scheme(path), "ts": timestamp_ms()}
 
 
+def format_uptime(seconds: float) -> str:
+    """fastfetch と同じ「9 hours, 55 minutes」表記。0 の単位は出さない。"""
+    total = int(seconds)
+    parts = []
+    for count, unit in ((total // 86400, "day"), (total % 86400 // 3600, "hour"), (total % 3600 // 60, "minute")):
+        if count:
+            parts.append(f"{count} {unit}{'s' if count != 1 else ''}")
+    return ", ".join(parts) or "less than a minute"
+
+
+@lru_cache(maxsize=1)
+def static_facts() -> dict[str, str]:
+    """再起動するまで変わらない項目。毎回読み直さない。"""
+    facts = {"kernel": platform.release(), "hname": system_socket.gethostname(), "shell": "?", "user": "?", "distro": "?"}
+    try:
+        entry = pwd.getpwuid(os.getuid())
+        facts["user"] = entry.pw_name
+        # $SHELL は起動元（Claude Code なら zsh）を指すので passwd のログインシェルを見る
+        facts["shell"] = Path(entry.pw_shell).name
+    except (KeyError, OSError):
+        pass
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                facts["distro"] = line.split("=", 1)[1].strip().strip('"')
+                break
+    except OSError:
+        pass
+    return facts
+
+
+def read_packages() -> int:
+    """pacman のローカルDBを数える。`pacman -Q | wc -l` と一致する（差分は DB 版数ファイル1件）。"""
+    try:
+        return sum(1 for entry in Path("/var/lib/pacman/local").iterdir() if entry.is_dir())
+    except OSError:
+        return 0
+
+
 def read_telemetry() -> dict[str, object]:
+    used_ratio, used_gib, total_gib, uptime_seconds = 0.0, 0.0, 0.0, 0.0
     try:
         memory = {}
         for line in Path("/proc/meminfo").read_text().splitlines():
             key, value = line.split(":", 1)
             memory[key] = int(value.strip().split()[0])
-        used = 100 * (1 - memory["MemAvailable"] / memory["MemTotal"])
+        # fastfetch と同じ「total - available」を使用量とする（used+buff/cache ではない）
+        total_kib, available_kib = memory["MemTotal"], memory["MemAvailable"]
+        used_ratio = 100 * (1 - available_kib / total_kib)
+        used_gib, total_gib = (total_kib - available_kib) / 1048576, total_kib / 1048576
         uptime_seconds = float(Path("/proc/uptime").read_text().split()[0])
-    except (OSError, KeyError, ValueError):
-        used, uptime_seconds = 0.0, 0.0
-    days, remainder = divmod(int(uptime_seconds), 86400)
-    hours = remainder // 3600
-    return {"type": "system.telemetry", "load": round(os.getloadavg()[0], 2), "memory": round(used, 1), "uptime": f"{days}D {hours}H", "host": system_socket.gethostname(), "ts": timestamp_ms()}
+    except (OSError, KeyError, ValueError, ZeroDivisionError):
+        pass
+    return {
+        "type": "system.telemetry",
+        "load": round(os.getloadavg()[0], 2),
+        "memory": round(used_ratio, 1),
+        "uptime": format_uptime(uptime_seconds),
+        "mem": f"{used_gib:.2f} GiB / {total_gib:.2f} GiB",
+        "pkgs": read_packages(),
+        **static_facts(),
+        "host": system_socket.gethostname(),
+        "ts": timestamp_ms(),
+    }
 
 
 def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCHEME_PATH) -> FastAPI:
