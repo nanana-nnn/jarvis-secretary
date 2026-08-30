@@ -4,7 +4,7 @@ import { ClapDetector } from "./audio/clap-detector";
 import { ClapMicrophone } from "./audio/microphone";
 import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
 import { DebugPanel } from "./components/DebugPanel";
-import { PixelCore } from "./components/PixelCore";
+import { LavaCore } from "./components/LavaCore";
 import { transition } from "./states/machine";
 import type { SecretaryEvent, SecretaryState } from "./states/types";
 
@@ -112,16 +112,6 @@ export default function App() {
     },
   ), []);
   const microphone = useMemo(() => new ClapMicrophone(detector), [detector]);
-  // 本物の sysmon dots パネルと同じく、PCがcavaで拾っているシステム音声を最優先で使う
-  // （iPhoneのマイクを有効化しなくても常に動いている）。サーバーから届かない間だけ
-  // マイク・疑似値へ落とす。requestAnimationFrame から直接読むので state 更新を挟まない
-  const serverBandsRef = useRef<{ bands: Float32Array; at: number } | null>(null);
-  const getBands = useMemo(() => () => {
-    const server = serverBandsRef.current;
-    // cava の framerate=30 なので300ms途絶えたら止まったとみなし、フォールバックへ渡す
-    if (server && Date.now() - server.at < 300) return server.bands;
-    return microphone.readBands();
-  }, [microphone]);
 
   useEffect(() => { detector.update(settings); saveClapSettings(settings); }, [detector, settings]);
 
@@ -135,12 +125,7 @@ export default function App() {
       },
       message => {
         if (!message || typeof message !== "object") return;
-        const event = message as { type?: unknown; scheme?: unknown; load?: unknown; memory?: unknown; uptime?: unknown; host?: unknown; bands?: unknown };
-
-        // PCのcavaが常時配信する20帯域。ドットパネルはこれを最優先の音源にする
-        if (event.type === "audio.bands" && Array.isArray(event.bands) && event.bands.every(v => typeof v === "number")) {
-          serverBandsRef.current = { bands: Float32Array.from(event.bands as number[]), at: Date.now() };
-        }
+        const event = message as { type?: unknown; scheme?: unknown; load?: unknown; memory?: unknown; uptime?: unknown; host?: unknown };
 
         // 壁紙を替えると caelestia の scheme.json が作り直され、
         // mode と必要な Material token 一式が届く。CSS 変数は html に反映する。
@@ -219,7 +204,7 @@ export default function App() {
     </header>
 
     <section className="core-stage">
-      <PixelCore state={view} getBands={getBands} />
+      <LavaCore state={view} />
     </section>
 
     <section className="state-panel">

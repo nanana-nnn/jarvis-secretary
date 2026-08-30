@@ -30,7 +30,8 @@ button, input { font: inherit; color: inherit }
 .pc-link div { display: flex; flex-direction: column; gap: 3px }
 .pc-link strong { color: var(--scheme-primary) }
 .core-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden }
-.pixel-core { width: min(92vw, 52vh); height: min(92vw, 52vh); max-width: 100%; display: block }
+/* 実物の dots パネル(620x340px)と同じ比率。グリッドは 69x34 でセルが 9:10 になる */
+.lava-core { width: 100%; aspect-ratio: 621 / 340; max-height: 100%; display: block }
 .state-panel { text-align: center; padding: 5px 12px 12px }
 .state-panel small { color: var(--scheme-primary); font: 800 8px/1 var(--mono); letter-spacing: .17em }
 .state-panel h1 { margin: 8px 0 5px; font: 800 clamp(20px, 6vw, 28px)/1 var(--mono); letter-spacing: -.02em }
@@ -62,5 +63,5 @@ button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 8
   .core-stage { grid-column: 1; grid-row: 2 }
   .state-panel { grid-column: 2; grid-row: 2; align-self: center; text-align: left }
   .state-panel:after { margin-left: 0 }
-  .pixel-core { width: min(57vw, 68vh); height: min(57vw, 68vh) }
+  .lava-core { width: 100%; aspect-ratio: 621 / 340 }
 }
