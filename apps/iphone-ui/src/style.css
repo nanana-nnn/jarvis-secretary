@@ -30,8 +30,7 @@ button, input { font: inherit; color: inherit }
 .pc-link div { display: flex; flex-direction: column; gap: 3px }
 .pc-link strong { color: var(--scheme-primary) }
 .core-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden }
-.grid-field { position: absolute; inset: 8% 2%; opacity: .16; mask-image: radial-gradient(circle, #000 0 46%, transparent 72%); background-image: linear-gradient(color-mix(in srgb, var(--scheme-primary) 50%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--scheme-primary) 50%, transparent) 1px, transparent 1px); background-size: 13px 13px }
-.pixel-core { width: min(92vw, 52vh); height: min(92vw, 52vh); max-width: 100%; display: block; filter: drop-shadow(0 0 12px color-mix(in srgb, var(--scheme-primary) 24%, transparent)) }
+.pixel-core { width: min(92vw, 52vh); height: min(92vw, 52vh); max-width: 100%; display: block }
 .state-panel { text-align: center; padding: 5px 12px 12px }
 .state-panel small { color: var(--scheme-primary); font: 800 8px/1 var(--mono); letter-spacing: .17em }
 .state-panel h1 { margin: 8px 0 5px; font: 800 clamp(20px, 6vw, 28px)/1 var(--mono); letter-spacing: -.02em }

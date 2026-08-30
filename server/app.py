@@ -5,7 +5,9 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import socket as system_socket
+import tempfile
 from time import monotonic_ns
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -17,6 +19,26 @@ from .config import Settings
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_SCHEME_PATH = Path.home() / ".local/state/caelestia/scheme.json"
 HEX_COLOUR = re.compile(r"^[0-9a-fA-F]{6}$")
+
+# ~/.config/caelestia/sysmon-dots.py と同じ cava 設定。BARS=20 を合わせておかないと
+# iPhone側の極座標マッピング（PixelCore.tsx の BAR_COUNT）とずれる
+CAVA_BARS = 20
+CAVA_CONFIG = """[general]
+framerate = 30
+bars = {bars}
+autosens = 1
+[input]
+method = pulse
+source = auto
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = ascii
+ascii_max_range = 100
+channels = mono
+[smoothing]
+noise_reduction = 40
+""".format(bars=CAVA_BARS)
 SCHEME_KEYS = (
     "background",
     "surfaceContainer",
@@ -105,20 +127,64 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                     await client.send_json(event)
             await asyncio.sleep(5)
 
+    async def stream_audio_bands() -> None:
+        # PCのシステム音声（cavaのpulse autoソース＝既定シンクのモニター）を20帯域化して
+        # 常時配信する。本物の sysmon dots パネルと同じ音源にすることで「常に動いている」を
+        # そのまま再現する。iPhoneのマイクには依存しない
+        tmp_dir = Path(tempfile.mkdtemp(prefix="jarvis-cava-"))
+        config_path = tmp_dir / "cava.conf"
+        config_path.write_text(CAVA_CONFIG, encoding="utf-8")
+        try:
+            while True:
+                process: asyncio.subprocess.Process | None = None
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        "cava", "-p", str(config_path),
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    assert process.stdout is not None
+                    async for raw in process.stdout:
+                        line = raw.decode("ascii", "ignore").strip().rstrip(";")
+                        if not line:
+                            continue
+                        bands = [int(v) / 100 for v in line.split(";") if v]
+                        if len(bands) != CAVA_BARS:
+                            continue
+                        event = {"type": "audio.bands", "bands": bands, "ts": timestamp_ms()}
+                        for client in tuple(clients):
+                            with suppress(RuntimeError, WebSocketDisconnect):
+                                await client.send_json(event)
+                except FileNotFoundError:
+                    logger.warning("[AUDIO] cava is not installed; dots panel falls back to client-side motion")
+                    return
+                finally:
+                    if process is not None and process.returncode is None:
+                        process.terminate()
+                        with suppress(ProcessLookupError):
+                            await process.wait()
+                # cava が落ちても（Bluetoothの出力先切替など）3秒後に立て直す
+                await asyncio.sleep(3)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = config
         watcher = asyncio.create_task(watch_scheme())
         telemetry = asyncio.create_task(push_telemetry())
+        audio = asyncio.create_task(stream_audio_bands())
         try:
             yield
         finally:
             watcher.cancel()
             telemetry.cancel()
+            audio.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
             with suppress(asyncio.CancelledError):
                 await telemetry
+            with suppress(asyncio.CancelledError):
+                await audio
 
     app = FastAPI(title="JARVIS Secretary", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
