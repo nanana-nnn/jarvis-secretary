@@ -1,346 +1,79 @@
-/* JARVIS Secretary — iPhone 常設画面
- *
- * 横向き固定。左に秘書の顔、右に管制卓。DESIGN.md §15 / §16 が正本。
- *
- * ── この画面が満たすもの ────────────────────────────
- *   §15  顔の位置と画角は状態で動かさない。変えるのは目・輝度・線だけ
- *        sleep/awake の切り替えは 150〜250ms のクロスフェード
- *   §16  OLED 常設。明るい面を大きく置かない。待機時は輝度を落とす
- *
- * ── 色の出どころ ──────────────────────────────────
- *   --tint は起動時と壁紙変更時に、サーバーが送る scheme.changed で
- *   caelestia の primary に差し替わる（App.tsx が html へインラインで書く）。
- *   だから CSS 側の --tint 初期値は「サーバーが落ちているときの見た目」でしかない。
- *   状態ごとの上書き（APPROVAL の琥珀・異常時の赤）は main に直接当てて
- *   html のインライン値より優先させている。
- *
- * ── 素材 ────────────────────────────────────────
- *   public/assets/secretary-{sleep,awake}.webp の2枚だけを使う。
- *   PNG のまま置くと Wi-Fi 経由の初回表示が固まるので必ず WebP にする。
- *
- * 2026-08-30: ミニファイされていたものを展開した。値は変えていない。
- *   コメントは「何をしているか」と「どの制約に効いているか」まで。
- *   個々の数値を選んだ理由は記録が無いので書いていない。
- */
-
 :root {
-  --bg: #070811;
-  --ink: #fff;
-  --dim: rgba(255, 255, 255, .62);
-  --line: rgba(255, 255, 255, .16);
-
-  --tint: #8cf5ff;      /* 主アクセント。実行時に caelestia の primary へ差し替わる */
-  --cyan: #74e8ff;
-  --magenta: #ff4fd8;
-  --amber: #ffc15c;     /* APPROVAL 専用 */
-  --danger: #ff5277;    /* ERROR / OFFLINE / マイク拒否 */
-
+  --scheme-bg: #f6fafa; --scheme-surface: #e7eff0; --scheme-surface-high: #e1eaeb;
+  --scheme-text: #2a3435; --scheme-muted: #566162; --scheme-outline: #a9b4b5;
+  --scheme-primary: #1b696f; --scheme-on-primary: #e8fdff; --scheme-error: #a83836;
+  --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, "JetBrains Mono", monospace;
-
-  color: var(--ink);
-  background: var(--bg);
-  font-family: var(--sans);
-  font-synthesis: none;
-  -webkit-text-size-adjust: 100%;
+  color: var(--scheme-text); background: var(--scheme-bg); font-family: var(--sans);
+  font-synthesis: none; -webkit-text-size-adjust: 100%;
 }
-
 * { box-sizing: border-box }
-html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg) }
-button { font: inherit; color: inherit }
-
-/* ── 土台 ──────────────────────────────────────── */
-/* .shell は <main> そのもので、状態クラス（.state-sleep など）も同じ要素に付く。
-   したがって「.state-xxx .shell」と書くと子孫セレクタになり永久に空振りする。
-   状態ごとの上書きは .state-xxx に直接書くこと。 */
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--scheme-bg) }
+button, input { font: inherit; color: inherit }
 .shell {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  grid-template-columns: 54% 46%;
-  isolation: isolate;
-  background:
-    radial-gradient(circle at 35% 35%, color-mix(in srgb, var(--tint) 18%, transparent), transparent 38%),
-    linear-gradient(125deg, #111326 0%, #080913 58%, #04050b 100%);
+  position: fixed; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: 8px; padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  isolation: isolate; overflow: hidden;
+  background: radial-gradient(circle at 50% 37%, color-mix(in srgb, var(--scheme-primary) 11%, transparent), transparent 37%), var(--scheme-bg);
+  transition: background .35s ease, color .35s ease;
 }
-
-/* 走査線と中央の縦線。画面全体に薄くかける */
-.shell:before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 8;
-  pointer-events: none;
-  opacity: .2;
-  background:
-    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, .06) 4px),
-    linear-gradient(90deg, transparent 49.9%, rgba(255, 255, 255, .08) 50%, transparent 50.1%);
-  mix-blend-mode: overlay;
-}
-
-/* 背後でゆっくり動く色被り。面で塗らず、ぼかした玉を流している */
-.atmosphere { position: absolute; inset: 0; overflow: hidden; pointer-events: none }
-.atmosphere i {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(55px);
-  opacity: .28;
-  animation: float 8s ease-in-out infinite alternate;
-}
-.atmosphere i:nth-child(1) { width: 44vw; height: 44vw; left: -12vw; top: -26vw; background: var(--cyan) }
-.atmosphere i:nth-child(2) { width: 30vw; height: 30vw; left: 34vw; bottom: -20vw; background: var(--magenta); animation-delay: -3s }
-.atmosphere i:nth-child(3) { width: 20vw; height: 20vw; right: -8vw; top: 15vh; background: var(--tint); animation-delay: -5s }
-
-/* ── 顔（左）──────────────────────────────────── */
-.portrait { grid-column: 1; position: relative; min-width: 0; z-index: 2; overflow: hidden }
-
-/* 右端を斜めに切って管制卓へ渡す */
-.portrait-frame { position: absolute; inset: 0; overflow: hidden; clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%) }
-.portrait-frame img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: 50% 30%;              /* 正方形の全身像を横長ペインへ。上下だけが切れるので Y だけが効く */
-  transition: opacity .22s ease, filter .7s ease;   /* §15 の 150〜250ms に収める */
-  filter: brightness(.78) saturate(1.18) contrast(1.08);
-}
-.portrait-awake { opacity: 0 }
-.portrait-awake.is-visible { opacity: 1 }
-
-/* 右側を背景へ沈めて、管制卓の文字が絵に乗らないようにする */
-.portrait-grade {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(90deg, rgba(7, 8, 17, .08), transparent 48%, rgba(7, 8, 17, .95) 100%),
-    linear-gradient(0deg, rgba(7, 8, 17, .92), transparent 32%),
-    linear-gradient(180deg, rgba(7, 8, 17, .65), transparent 25%);
-  mix-blend-mode: multiply;
-}
-/* 絵の上を斜めに流れる光 */
-.portrait-grade:after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(112deg, transparent 28%, color-mix(in srgb, var(--tint) 42%, transparent) 48%, transparent 58%);
-  mix-blend-mode: screen;
-  animation: spectral 5s ease-in-out infinite;
-}
-
-/* 上から下へ抜ける走査ビーム */
-.scan-beam {
-  position: absolute;
-  left: -20%; right: -10%;
-  height: 22%; top: -30%;
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--cyan) 18%, transparent), rgba(255, 255, 255, .22), transparent);
-  mix-blend-mode: screen;
-  transform: skewY(-7deg);
-  animation: scan 4.8s linear infinite;
-}
-
-/* 虹彩だけを切り抜いて重ね、THINKING のときに明滅させる。
-   マスクの 37%/40% は awake 素材の瞳の位置。素材を差し替えたら測り直す。 */
-.iris-pulse {
-  position: absolute;
-  inset: 0;
-  background: url("/assets/secretary-awake.webp") 50% 30%/cover no-repeat;
-  filter: saturate(1.8) brightness(1.15);
-  mask-image: radial-gradient(circle 15% at 48% 52%, #000, transparent);
-  -webkit-mask-image: radial-gradient(circle 15% at 48% 52%, #000, transparent);
-  opacity: 0;
-}
-.state-thinking .iris-pulse { animation: iris 1.35s ease-in-out infinite }
-
-/* 顔の背後の同心円。計器らしさを出すための飾り */
-.portrait-aura {
-  position: absolute;
-  z-index: -1;
-  width: 42vw; height: 42vw;
-  left: 7vw; top: 50%;
-  transform: translateY(-50%);
-  border: 1px solid color-mix(in srgb, var(--tint) 45%, transparent);
-  border-radius: 50%;
-  box-shadow: 0 0 90px color-mix(in srgb, var(--tint) 18%, transparent);
-}
-.portrait-aura:before, .portrait-aura:after, .portrait-aura i {
-  content: "";
-  position: absolute;
-  inset: 7%;
-  border: 1px dashed rgba(255, 255, 255, .22);
-  border-radius: 50%;
-  animation: spin 28s linear infinite;
-}
-.portrait-aura:after {
-  inset: 19%;
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--magenta) 36%, transparent);
-  animation-direction: reverse;
-  animation-duration: 18s;
-}
-.portrait-aura i:nth-child(2) { inset: 31%; border-color: var(--tint); animation-duration: 12s }
-
-/* 左下の識別票 */
-.portrait-id {
-  position: absolute;
-  left: 22px; bottom: 17px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 10px;
-  align-items: baseline;
-  font-family: var(--mono);
-  text-shadow: 0 2px 8px #000;
-}
-.portrait-id span { grid-row: 1 / 3; font-size: 24px; font-weight: 900; color: var(--tint) }
-.portrait-id strong { font-size: 10px; letter-spacing: .22em }
-.portrait-id small { font-size: 7px; letter-spacing: .18em; color: var(--dim) }
-
-/* 隅のトンボ */
-.corner { position: absolute; width: 42px; height: 42px; border-color: var(--tint); opacity: .8 }
-.corner-nw { left: 15px; top: 15px; border-left: 2px solid; border-top: 2px solid }
-.corner-se { right: 11%; bottom: 15px; border-right: 2px solid; border-bottom: 2px solid }
-
-/* ── 管制卓（右）────────────────────────────────── */
-.command-deck { grid-column: 2; z-index: 3; min-width: 0; display: flex; flex-direction: column; padding: 18px 22px 16px 8px }
-
-.masthead { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--line); padding-bottom: 10px }
-.brand { display: flex; align-items: baseline; gap: 10px }
-.brand b { font: 900 clamp(21px, 3.4vw, 38px)/.8 var(--sans); letter-spacing: -.06em }
-.brand b:after { content: "/OS"; color: var(--tint); font-size: .38em; letter-spacing: .06em }
-.brand span, .linux-mark { font: 700 7px/1.5 var(--mono); letter-spacing: .2em; color: var(--dim) }
-/* 動かしている PC を名乗る欄（CAELESTIA / HYPRLAND // ARCH）*/
-.linux-mark { text-align: right; display: flex; flex-direction: column }
-.linux-mark span { color: var(--tint) }
-.linux-mark strong { color: #fff }
-
-/* 状態の見出し。日本語1行＋英字コードで、混ぜない */
-.hero-copy { margin: auto 0 0; position: relative }
-.hero-copy:before { content: attr(data-word); position: absolute }
-.status-line { display: flex; align-items: center; gap: 8px; color: var(--tint); font: 800 clamp(8px, 1.05vw, 11px)/1 var(--mono); letter-spacing: .19em }
-.signal { width: 7px; height: 7px; border: 1px solid var(--dim); border-radius: 50% }
-.signal.online { background: var(--tint); border-color: var(--tint); box-shadow: 0 0 16px var(--tint); animation: pulse 1.5s infinite }
-.hero-copy h1 {
-  margin: 10px 0 7px;
-  font-size: clamp(34px, 6.15vw, 72px);
-  line-height: .96;
-  letter-spacing: -.075em;
-  font-weight: 900;
-  white-space: nowrap;
-  text-shadow: 0 0 32px color-mix(in srgb, var(--tint) 18%, transparent);
-}
-.hero-copy h1:after {
-  content: "";
-  display: block;
-  width: 72%; height: 4px;
-  margin-top: 11px;
-  background: linear-gradient(90deg, var(--tint), var(--magenta), transparent);
-  box-shadow: 0 0 17px color-mix(in srgb, var(--tint) 48%, transparent);
-}
-.hero-copy p { margin: 0; color: rgba(255, 255, 255, .82); font-size: clamp(10px, 1.45vw, 16px); font-weight: 650; letter-spacing: .03em }
-
-/* WAKE → LISTEN → ACT の進行 */
-.process-track { display: flex; align-items: center; margin: 19px 0 10px; font: 700 7px/1 var(--mono); letter-spacing: .11em; color: rgba(255, 255, 255, .3) }
-.process-track i { flex: 1; height: 1px; margin: 0 7px; background: var(--line) }
-.process-track .active { color: var(--tint); text-shadow: 0 0 10px var(--tint) }
-
-/* Linux の実測値。値はサーバーの system.telemetry（5秒間隔）から来る。
-   数字を作らない。届いていないときは App.tsx 側の初期値が出る。 */
-.telemetry { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px }
-.telemetry-card {
-  position: relative;
-  min-width: 0;
-  padding: 9px 8px 8px;
-  border: 1px solid var(--line);
-  background: linear-gradient(145deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .025));
-  overflow: hidden;
-}
-.telemetry-card:before { content: ""; position: absolute; left: 0; top: 0; width: 32%; height: 2px; background: var(--tint) }
-.telemetry-card span { display: block; color: var(--dim); font: 700 6px/1 var(--mono); letter-spacing: .13em; white-space: nowrap }
-.telemetry-card strong { display: block; margin-top: 7px; font: 800 clamp(12px, 1.65vw, 19px)/1 var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
-.telemetry-card small { display: block; margin-top: 4px; color: var(--tint); font: 700 5px/1 var(--mono); letter-spacing: .12em }
-
-.controls { display: flex; justify-content: space-between; align-items: end; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line) }
-.live-copy { display: flex; flex-direction: column; gap: 3px; font-family: var(--mono) }
-.live-copy span { color: var(--tint); font-size: 8px; font-weight: 800; letter-spacing: .17em }
-.live-copy small { color: var(--dim); font-size: 5px; letter-spacing: .12em }
+.shell:before { content: ""; position: absolute; inset: 8px; z-index: -1; pointer-events: none; border: 1px solid color-mix(in srgb, var(--scheme-outline) 70%, transparent); border-radius: 24px; box-shadow: inset 0 0 25px color-mix(in srgb, var(--scheme-primary) 7%, transparent) }
+.shell:after { content: ""; position: absolute; left: 30px; right: 30px; bottom: 9px; height: 2px; background: repeating-linear-gradient(90deg, var(--scheme-primary) 0 14px, transparent 14px 25px); opacity: .75 }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 1px 7px 8px; border-bottom: 1px solid color-mix(in srgb, var(--scheme-outline) 62%, transparent) }
+.brand { display: flex; align-items: baseline; gap: 9px }
+.brand b { font: 900 20px/1 var(--sans); letter-spacing: -.04em }
+.brand span, .pc-link { font: 700 7px/1 var(--mono); letter-spacing: .14em }
+.brand span, .pc-link small { color: var(--scheme-muted) }
+.pc-link { display: flex; align-items: center; gap: 7px; text-align: right; opacity: .58 }
+.pc-link.online { opacity: 1 }
+.pc-link .signal { width: 6px; height: 6px; border-radius: 50%; background: var(--scheme-outline) }
+.pc-link.online .signal { background: var(--scheme-primary); box-shadow: 0 0 10px var(--scheme-primary) }
+.pc-link div { display: flex; flex-direction: column; gap: 3px }
+.pc-link strong { color: var(--scheme-primary) }
+.core-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden }
+.grid-field { position: absolute; inset: 8% 2%; opacity: .16; mask-image: radial-gradient(circle, #000 0 46%, transparent 72%); background-image: linear-gradient(color-mix(in srgb, var(--scheme-primary) 50%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--scheme-primary) 50%, transparent) 1px, transparent 1px); background-size: 13px 13px }
+.pixel-core { width: min(92vw, 52vh); height: min(92vw, 52vh); max-width: 100%; display: block; filter: drop-shadow(0 0 12px color-mix(in srgb, var(--scheme-primary) 24%, transparent)) }
+.core-mark { position: absolute; display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid color-mix(in srgb, var(--scheme-bg) 75%, transparent); color: var(--scheme-bg); background: color-mix(in srgb, var(--scheme-primary) 82%, transparent); border-radius: 4px; font: 900 11px/1 var(--mono); box-shadow: 0 0 14px color-mix(in srgb, var(--scheme-primary) 42%, transparent) }
+.state-panel { text-align: center; padding: 5px 12px 12px }
+.state-panel small { color: var(--scheme-primary); font: 800 8px/1 var(--mono); letter-spacing: .17em }
+.state-panel h1 { margin: 8px 0 5px; font-size: clamp(27px, 7.8vw, 38px); line-height: 1; letter-spacing: -.06em }
+.state-panel p { margin: 0; color: var(--scheme-muted); font-size: 11px; font-weight: 650 }
+.state-panel:after { content: ""; display: block; width: 116px; height: 3px; margin: 13px auto 0; background: linear-gradient(90deg, var(--scheme-primary) 0 28%, color-mix(in srgb, var(--scheme-primary) 17%, transparent) 28%) }
+.terminal-id { display: none; position: absolute; z-index: 5; inset: 76px 24px 86px; align-content: center; padding: 22px; border: 1px solid var(--scheme-primary); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 94%, transparent); box-shadow: 0 16px 50px color-mix(in srgb, var(--scheme-text) 17%, transparent); backdrop-filter: blur(20px); font-family: var(--mono) }
+.state-booting .terminal-id { display: grid; animation: boot-card 2.2s ease both }
+.terminal-id pre { margin: 0 0 20px; overflow: hidden; color: var(--scheme-primary); font: 700 clamp(7px, 2vw, 11px)/1.25 var(--mono); white-space: pre }
+.terminal-id dl { margin: 0; padding: 10px 13px; border: 1px solid var(--scheme-outline); border-radius: 10px }
+.terminal-id dl div { display: grid; grid-template-columns: 80px 1fr; padding: 4px 0; font-size: 9px }
+.terminal-id dt { color: var(--scheme-muted) }
+.terminal-id dd { margin: 0; text-align: right; font-weight: 800 }
+.controls { display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 8px 6px 5px; border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 62%, transparent) }
+.system-flags { display: flex; gap: 12px; color: var(--scheme-muted); font: 700 6px/1 var(--mono); letter-spacing: .08em }
+.system-flags span:before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 5px 1px 0; border-radius: 50%; background: var(--scheme-primary) }
 .actions { display: flex; align-items: center; gap: 6px }
-button { border-radius: 0; border: 1px solid var(--line); background: rgba(255, 255, 255, .05); padding: 8px 10px; font: 800 7px/1 var(--mono); letter-spacing: .1em }
-.primary-action { color: #070811; background: var(--tint); border-color: var(--tint); box-shadow: 0 0 22px color-mix(in srgb, var(--tint) 35%, transparent) }
-.debug-action { color: var(--dim) }
-.mic-live { color: var(--tint); font: 800 7px/1 var(--mono); letter-spacing: .1em }
-.warning { color: var(--danger); font: 800 7px/1 var(--mono) }
-.edge-label { position: absolute; z-index: 4; right: 4px; top: 50%; writing-mode: vertical-rl; transform: translateY(-50%); color: rgba(255, 255, 255, .24); font: 700 5px/1 var(--mono); letter-spacing: .28em }
-
-/* ── 状態ごとの差 ──────────────────────────────── */
-/* 待機。ここが一日の大半を占めるので §15 の指定どおりに落とす。
-   輝度 .17 / 彩度 .2 は「旧素材(L平均23%)で意図どおりだった実効輝度 9.7% を、
-   新素材(L平均57%)でも保つ」ために逆算した値。素材を替えたら計算し直す。 */
-.state-sleep .portrait-frame img { filter: brightness(.17) saturate(.2) contrast(1.08) }
-.state-sleep .scan-beam { animation-duration: 8s; opacity: .55 }
-
-/* 焼き付き防止（§15「数ピクセル単位のゆっくりした位置移動」）。
-   240秒かけて 6px×4px。目では動きを追えない速さだが、
-   常時同じ画素を光らせ続けるのを避けられる。
-   危ないのは動く光り物ではなく、見出し・トンボ・カード枠のような
-   位置が固定された要素なので、画面ごと動かしている。 */
+button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 8px 10px; background: var(--scheme-surface); font: 800 7px/1 var(--mono); letter-spacing: .06em }
+.primary-action { color: var(--scheme-on-primary); border-color: var(--scheme-primary); background: var(--scheme-primary); box-shadow: 0 0 15px color-mix(in srgb, var(--scheme-primary) 26%, transparent) }
+.debug-action { width: 29px; padding-inline: 0; color: var(--scheme-muted) }
+.mic-live { color: var(--scheme-primary); font: 800 7px/1 var(--mono); letter-spacing: .08em }
+.warning { color: var(--scheme-error); font: 800 7px/1 var(--mono) }
+.state-waking .core-stage { animation: wake-flash .7s ease-out }
+.state-listening .shell:before, .state-listening:before { box-shadow: inset 0 0 35px color-mix(in srgb, var(--scheme-primary) 14%, transparent) }
+.state-approval .core-mark { transform: rotate(45deg) }
+.state-error .state-panel small, .state-offline .state-panel small { color: var(--scheme-error) }
 .state-sleep { animation: drift 240s linear infinite alternate }
-
-/* LISTENING だけ明るい水色へ寄せる。
-   2026-08-30 修正: 元は `.state-listening .shell` と書かれていたが、
-   .shell と状態クラスは同じ <main> に付くため子孫セレクタが一致せず、
-   待機時と同じ色のままだった（実測 #1b696f）。同一要素へ直接当てる。 */
-.state-listening { --cyan: #85fff5; --tint: var(--cyan) }
-.state-listening .portrait-aura { animation: listen-ring 1s ease-out infinite }
-
-.state-thinking .hero-copy h1, .state-thinking .status-line { color: #fff }
-.state-thinking .atmosphere i { opacity: .45 }
-.state-approval { --tint: var(--amber) }
-.state-error, .state-offline { --tint: var(--danger) }
-.state-speaking .portrait-grade:after { animation-duration: 1.2s }
-
-/* ── 検出ログ ──────────────────────────────────── */
-.debug {
-  position: absolute;
-  z-index: 20;
-  inset: 12px 12px 12px auto;
-  width: min(48%, 430px);
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--tint);
-  background: rgba(7, 8, 17, .95);
-  backdrop-filter: blur(18px);
-  font: 10px/1.5 var(--mono);
-}
-.settings { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line) }
-.settings label { color: var(--dim); font-size: 8px }
-.settings input { display: block; width: 58px; margin-top: 3px; border: 1px solid var(--line); background: #080913; color: #fff; padding: 4px }
-.debug ol { padding-left: 18px }
-.debug li { color: var(--dim) }
-.debug li.accepted { color: var(--tint) }
-
-/* ── アニメーション ────────────────────────────── */
-@keyframes scan { to { top: 118% } }
-@keyframes spin { to { transform: rotate(360deg) } }
-@keyframes pulse { 50% { opacity: .35; transform: scale(.65) } }
-@keyframes iris { 0%, 100% { opacity: 0 } 50% { opacity: 1 } }
-@keyframes float { to { transform: translate(5vw, 3vh) scale(1.14) } }
-@keyframes spectral { 50% { transform: translateX(22%); opacity: .55 } }
-@keyframes drift { to { transform: translate(6px, 4px) } }
-@keyframes listen-ring { to { box-shadow: 0 0 0 25px transparent, 0 0 90px color-mix(in srgb, var(--tint) 12%, transparent) } }
-
-@media (prefers-reduced-motion: reduce) {
-  *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important }
-}
-
-/* 縦持ち（スタンドから外したとき）は顔を上、管制卓を下に積む */
-@media (orientation: portrait) {
-  .shell { grid-template-columns: 1fr; grid-template-rows: 52% 48% }
-  .portrait { grid-column: 1; grid-row: 1 }
-  .portrait-frame { clip-path: none }
-  .command-deck { grid-column: 1; grid-row: 2; padding: 10px 16px 12px }
-  .portrait-id { bottom: 10px }
-  .hero-copy h1 { font-size: clamp(30px, 10vw, 52px) }
-  .telemetry { grid-template-columns: repeat(2, 1fr) }
-  .telemetry-card:nth-child(n+3) { display: none }
+.debug { position: absolute; z-index: 20; inset: 14px; overflow: auto; padding: 16px; border: 1px solid var(--scheme-outline); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 96%, transparent); box-shadow: 0 18px 55px color-mix(in srgb, var(--scheme-text) 18%, transparent); backdrop-filter: blur(24px); font: 10px/1.5 var(--mono) }
+.settings { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--scheme-outline) }
+.settings label { color: var(--scheme-muted); font-size: 8px }
+.settings input { display: block; width: 58px; margin-top: 3px; border: 1px solid var(--scheme-outline); border-radius: 6px; background: var(--scheme-surface); padding: 4px }
+.debug ol { padding-left: 18px }.debug li { color: var(--scheme-muted) }.debug li.accepted { color: var(--scheme-primary) }
+@keyframes wake-flash { 0% { filter: brightness(2.2) } 100% { filter: brightness(1) } }
+@keyframes boot-card { 0% { opacity: 0; transform: scale(.97) } 18%, 82% { opacity: 1; transform: scale(1) } 100% { opacity: 0 } }
+@keyframes drift { to { transform: translate(4px, 5px) } }
+@media (prefers-reduced-motion: reduce) { *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important } }
+@media (orientation: landscape) {
+  .shell { grid-template-columns: minmax(0, 1fr) minmax(260px, .72fr); grid-template-rows: auto 1fr auto; column-gap: 20px }
+  .topbar, .controls { grid-column: 1 / -1 }
+  .core-stage { grid-column: 1; grid-row: 2 }
+  .state-panel { grid-column: 2; grid-row: 2; align-self: center; text-align: left }
+  .state-panel:after { margin-left: 0 }
+  .pixel-core { width: min(57vw, 68vh); height: min(57vw, 68vh) }
 }

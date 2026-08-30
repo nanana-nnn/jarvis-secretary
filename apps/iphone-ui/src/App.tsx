@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ReconnectingSocket, type SocketStatus } from "./api/socket";
 import { ClapDetector } from "./audio/clap-detector";
 import { ClapMicrophone } from "./audio/microphone";
-import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
+import { DEFAULT_CLAP_SETTINGS, type AudioMetrics, type ClapLog, type ClapSettings } from "./audio/types";
 import { DebugPanel } from "./components/DebugPanel";
-import { Secretary } from "./components/Secretary";
+import { PixelCore } from "./components/PixelCore";
 import { transition } from "./states/machine";
 import type { SecretaryEvent, SecretaryState } from "./states/types";
 
-// WAKE_ANIM_MS は §15 のクロスフェード（150〜250ms）と揃える。
+// WAKE_ANIM_MS は §15 の指パッチン衝撃波と状態遷移を揃える。
 // LISTEN_IDLE_MS を過ぎると自分から待機へ戻る（言い忘れたまま起きっぱなしにしない）。
 const WAKE_ANIM_MS = 250;
 const LISTEN_IDLE_MS = 8000;
@@ -17,6 +17,30 @@ const LISTEN_IDLE_MS = 8000;
 const HEX = /^#[0-9a-f]{6}$/i;
 
 type Telemetry = { load: number; memory: number; uptime: string; host: string };
+type Scheme = {
+  mode: "light" | "dark";
+  background: string;
+  surfaceContainer: string;
+  surfaceContainerHigh: string;
+  onSurface: string;
+  onSurfaceVariant: string;
+  outlineVariant: string;
+  primary: string;
+  onPrimary: string;
+  error: string;
+};
+
+const schemeVariables: Record<Exclude<keyof Scheme, "mode">, string> = {
+  background: "--scheme-bg",
+  surfaceContainer: "--scheme-surface",
+  surfaceContainerHigh: "--scheme-surface-high",
+  onSurface: "--scheme-text",
+  onSurfaceVariant: "--scheme-muted",
+  outlineVariant: "--scheme-outline",
+  primary: "--scheme-primary",
+  onPrimary: "--scheme-on-primary",
+  error: "--scheme-error",
+};
 
 /**
  * 状態ごとの表示文。
@@ -56,14 +80,6 @@ function saveClapSettings(settings: ClapSettings): void {
   }
 }
 
-function TelemetryCard({ label, value, suffix }: { label: string; value: string; suffix?: string }) {
-  return <div className="telemetry-card">
-    <span>{label}</span>
-    <strong>{value}</strong>
-    {suffix ? <small>{suffix}</small> : null}
-  </div>;
-}
-
 export default function App() {
   const [state, setState] = useState<SecretaryState>("BOOTING");
   const [mic, setMic] = useState<"idle" | "on" | "denied">("idle");
@@ -74,6 +90,7 @@ export default function App() {
   const [settings, setSettings] = useState<ClapSettings>(loadClapSettings);
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
+  const metricsRef = useRef<AudioMetrics>({ at: 0, rms: 0, hfRatio: 0, riseMs: 0 });
   // 検出コールバックは再生成しない（依存配列が空）ので、最新の状態は ref 経由で見る
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -90,7 +107,7 @@ export default function App() {
       if (last) socketRef.current?.send({ type: "clap.candidate", ...last });
     },
   ), []);
-  const microphone = useMemo(() => new ClapMicrophone(detector), [detector]);
+  const microphone = useMemo(() => new ClapMicrophone(detector, metrics => { metricsRef.current = metrics; }), [detector]);
 
   useEffect(() => { detector.update(settings); saveClapSettings(settings); }, [detector, settings]);
 
@@ -104,12 +121,20 @@ export default function App() {
       },
       message => {
         if (!message || typeof message !== "object") return;
-        const event = message as { type?: unknown; primary?: unknown; load?: unknown; memory?: unknown; uptime?: unknown; host?: unknown };
+        const event = message as { type?: unknown; scheme?: unknown; load?: unknown; memory?: unknown; uptime?: unknown; host?: unknown };
 
-        // 壁紙を替えると caelestia の scheme.json が作り直され、その primary が届く。
-        // CSS 変数を html へ書くので、状態クラス側の上書き（APPROVAL の琥珀など）は生きたまま。
-        if (event.type === "scheme.changed" && typeof event.primary === "string" && HEX.test(event.primary)) {
-          document.documentElement.style.setProperty("--tint", event.primary);
+        // 壁紙を替えると caelestia の scheme.json が作り直され、
+        // mode と必要な Material token 一式が届く。CSS 変数は html に反映する。
+        if (event.type === "scheme.changed" && event.scheme && typeof event.scheme === "object") {
+          const scheme = event.scheme as Partial<Scheme>;
+          const valid = (scheme.mode === "light" || scheme.mode === "dark")
+            && Object.keys(schemeVariables).every(key => typeof scheme[key as keyof Scheme] === "string" && HEX.test(String(scheme[key as keyof Scheme])));
+          if (valid) {
+            document.documentElement.dataset.theme = scheme.mode;
+            for (const [key, variable] of Object.entries(schemeVariables)) {
+              document.documentElement.style.setProperty(variable, String(scheme[key as keyof Scheme]));
+            }
+          }
         }
 
         // PC の実測値（5秒間隔）。数値が揃っていないメッセージは捨てる
@@ -166,57 +191,50 @@ export default function App() {
   const showDebug = debug || params?.get("debug") === "1";
 
   return <main className={`shell state-${view.toLowerCase()}`}>
-    <div className="atmosphere" aria-hidden="true"><i /><i /><i /></div>
-    <Secretary state={view} />
-
-    <section className="command-deck">
-      <header className="masthead">
-        <div className="brand"><b>JARVIS</b><span>PERSONAL INTELLIGENCE</span></div>
-        {/* 動かしている PC を名乗る。iPhone 単体ではなく Linux と組であることを見せる */}
-        <div className="linux-mark"><span>CAELESTIA</span><strong>HYPRLAND // ARCH</strong></div>
-      </header>
-
-      <div className="hero-copy">
-        <div className="status-line">
-          <span className={`signal ${connected ? "online" : ""}`} />
-          {content.code} // {content.en}
-        </div>
-        <h1>{content.jp}</h1>
-        <p>{content.message}</p>
+    <header className="topbar">
+      <div className="brand"><b>JARVIS</b><span>LOCAL INTELLIGENCE</span></div>
+      <div className={`pc-link ${connected ? "online" : ""}`}>
+        <span className="signal" />
+        <div><strong>{connected ? "LINKED" : "OFFLINE"}</strong><small>{telemetry.host.toUpperCase()}</small></div>
       </div>
+    </header>
 
-      <div className="process-track">
-        <span className="active">01&nbsp; WAKE</span>
-        <i />
-        <span className={view !== "SLEEP" ? "active" : ""}>02&nbsp; LISTEN</span>
-        <i />
-        <span className={["THINKING", "APPROVAL", "SPEAKING"].includes(view) ? "active" : ""}>03&nbsp; ACT</span>
-      </div>
-
-      {/* 表示する数値は server から届いた実測値だけ。埋めない */}
-      <section className="telemetry" aria-label="Linuxシステム情報">
-        <TelemetryCard label="SYSTEM LOAD" value={telemetry.load.toFixed(2)} suffix="1 MIN" />
-        <TelemetryCard label="MEMORY" value={`${Math.round(telemetry.memory)}`} suffix="% USED" />
-        <TelemetryCard label="UPTIME" value={telemetry.uptime} />
-        <TelemetryCard label="HOST" value={telemetry.host.toUpperCase()} suffix="LAN SECURE" />
-      </section>
-
-      <footer className="controls">
-        <div className="live-copy">
-          <span>{connected ? "CORE ONLINE" : "CORE PAUSED"}</span>
-          <small>VAULT LINK / LOCAL AI / NO CLOUD</small>
-        </div>
-        <div className="actions">
-          {mic !== "on"
-            ? <button className="primary-action" onClick={enableMic}>音声回路を起動</button>
-            : <span className="mic-live">● MIC LIVE</span>}
-          {mic === "denied" ? <span className="warning">MIC DENIED</span> : null}
-          <button className="debug-action" onClick={() => setDebug(value => !value)}>{debug ? "CLOSE LOG" : "SYSTEM LOG"}</button>
-        </div>
-      </footer>
+    <section className="core-stage">
+      <div className="grid-field" aria-hidden="true" />
+      <PixelCore state={view} metricsRef={metricsRef} />
+      <span className="core-mark" aria-hidden="true">J</span>
     </section>
 
-    <div className="edge-label" aria-hidden="true">INTELLIGENCE SYSTEM // 2026</div>
+    <section className="state-panel">
+      <small>{content.code} / {content.en}</small>
+      <h1>{content.jp}</h1>
+      <p>{content.message}</p>
+    </section>
+
+    <section className="terminal-id" aria-label="JARVIS システム情報">
+      <pre>{`     __  ___    ____ _    _______ _____
+ __ / / /   |  / __ \\ |  / /  _/ ___/
+/ // / / /| | / /_/ / | / // / \\__ \\
+\\___/ /_/  |_/_/ |_| |___/___/____/`}</pre>
+      <dl>
+        <div><dt>CORE</dt><dd>JARVIS</dd></div>
+        <div><dt>HOST</dt><dd>{telemetry.host}</dd></div>
+        <div><dt>SYSTEM</dt><dd>CachyOS / Hyprland</dd></div>
+        <div><dt>MEMORY</dt><dd>Start Vault</dd></div>
+        <div><dt>INPUT</dt><dd>SNAP + VOICE</dd></div>
+      </dl>
+    </section>
+
+    <footer className="controls">
+      <div className="system-flags"><span>VAULT 5</span><span>LAN SECURE</span><span>NO CLOUD</span></div>
+      <div className="actions">
+          {mic !== "on"
+            ? <button className="primary-action" onClick={enableMic}>マイクを有効にする</button>
+            : <span className="mic-live">● MIC LIVE</span>}
+          {mic === "denied" ? <span className="warning">MIC DENIED</span> : null}
+          <button className="debug-action" onClick={() => setDebug(value => !value)} aria-label="検出ログ">•••</button>
+      </div>
+    </footer>
     {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} /> : null}
   </main>;
 }

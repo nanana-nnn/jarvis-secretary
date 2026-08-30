@@ -17,6 +17,17 @@ from .config import Settings
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_SCHEME_PATH = Path.home() / ".local/state/caelestia/scheme.json"
 HEX_COLOUR = re.compile(r"^[0-9a-fA-F]{6}$")
+SCHEME_KEYS = (
+    "background",
+    "surfaceContainer",
+    "surfaceContainerHigh",
+    "onSurface",
+    "onSurfaceVariant",
+    "outlineVariant",
+    "primary",
+    "onPrimary",
+    "error",
+)
 
 
 def timestamp_ms() -> int:
@@ -29,6 +40,30 @@ def read_primary(path: Path) -> str | None:
     except (OSError, KeyError, TypeError, json.JSONDecodeError):
         return None
     return f"#{value.lower()}" if isinstance(value, str) and HEX_COLOUR.fullmatch(value) else None
+
+
+def read_scheme(path: Path) -> dict[str, str] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        colours = payload["colours"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+    mode = payload.get("mode")
+    if mode not in {"light", "dark"}:
+        return None
+
+    scheme = {"mode": mode}
+    for key in SCHEME_KEYS:
+        value = colours.get(key)
+        if not isinstance(value, str) or not HEX_COLOUR.fullmatch(value):
+            return None
+        scheme[key] = f"#{value.lower()}"
+    return scheme
+
+
+def scheme_event(path: Path) -> dict[str, object]:
+    return {"type": "scheme.changed", "scheme": read_scheme(path), "ts": timestamp_ms()}
 
 
 def read_telemetry() -> dict[str, object]:
@@ -51,12 +86,12 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     clients: set[WebSocket] = set()
 
     async def watch_scheme() -> None:
-        previous = read_primary(scheme_path) or "#ffffff"
+        previous = read_scheme(scheme_path)
         while True:
-            primary = read_primary(scheme_path) or "#ffffff"
-            if primary != previous:
-                previous = primary
-                event = {"type": "scheme.changed", "primary": primary, "ts": timestamp_ms()}
+            scheme = read_scheme(scheme_path)
+            if scheme != previous:
+                previous = scheme
+                event = scheme_event(scheme_path)
                 for client in tuple(clients):
                     with suppress(RuntimeError, WebSocketDisconnect):
                         await client.send_json(event)
@@ -107,8 +142,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         await socket.accept()
         clients.add(socket)
         await socket.send_json({"type": "connection.ready", "ts": timestamp_ms()})
-        primary = read_primary(scheme_path) or "#ffffff"
-        await socket.send_json({"type": "scheme.changed", "primary": primary, "ts": timestamp_ms()})
+        await socket.send_json(scheme_event(scheme_path))
         await socket.send_json(read_telemetry())
         try:
             while True:
