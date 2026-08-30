@@ -20,10 +20,9 @@ button, input { font: inherit; color: inherit }
 .shell:before { content: ""; position: absolute; inset: 8px; z-index: -1; pointer-events: none; border: 1px solid color-mix(in srgb, var(--scheme-outline) 70%, transparent); border-radius: 24px; box-shadow: inset 0 0 25px color-mix(in srgb, var(--scheme-primary) 7%, transparent) }
 .shell:after { content: ""; position: absolute; left: 30px; right: 30px; bottom: 9px; height: 2px; background: repeating-linear-gradient(90deg, var(--scheme-primary) 0 14px, transparent 14px 25px); opacity: .75 }
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 1px 7px 8px; border-bottom: 1px solid color-mix(in srgb, var(--scheme-outline) 62%, transparent) }
-.brand { display: flex; align-items: baseline; gap: 9px }
-.brand b { font: 900 20px/1 var(--sans); letter-spacing: -.04em }
-.brand span, .pc-link { font: 700 7px/1 var(--mono); letter-spacing: .14em }
-.brand span, .pc-link small { color: var(--scheme-muted) }
+.ascii-logo { margin: 0; color: var(--scheme-primary); font: 700 clamp(6px, 1.7vw, 9px)/1.25 var(--mono); white-space: pre; letter-spacing: -.02em }
+.pc-link { font: 700 7px/1 var(--mono); letter-spacing: .14em }
+.pc-link small { color: var(--scheme-muted) }
 .pc-link { display: flex; align-items: center; gap: 7px; text-align: right; opacity: .58 }
 .pc-link.online { opacity: 1 }
 .pc-link .signal { width: 6px; height: 6px; border-radius: 50%; background: var(--scheme-outline) }
@@ -33,19 +32,10 @@ button, input { font: inherit; color: inherit }
 .core-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden }
 .grid-field { position: absolute; inset: 8% 2%; opacity: .16; mask-image: radial-gradient(circle, #000 0 46%, transparent 72%); background-image: linear-gradient(color-mix(in srgb, var(--scheme-primary) 50%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--scheme-primary) 50%, transparent) 1px, transparent 1px); background-size: 13px 13px }
 .pixel-core { width: min(92vw, 52vh); height: min(92vw, 52vh); max-width: 100%; display: block; filter: drop-shadow(0 0 12px color-mix(in srgb, var(--scheme-primary) 24%, transparent)) }
-.core-mark { position: absolute; display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid color-mix(in srgb, var(--scheme-bg) 75%, transparent); color: var(--scheme-bg); background: color-mix(in srgb, var(--scheme-primary) 82%, transparent); border-radius: 4px; font: 900 11px/1 var(--mono); box-shadow: 0 0 14px color-mix(in srgb, var(--scheme-primary) 42%, transparent) }
 .state-panel { text-align: center; padding: 5px 12px 12px }
 .state-panel small { color: var(--scheme-primary); font: 800 8px/1 var(--mono); letter-spacing: .17em }
-.state-panel h1 { margin: 8px 0 5px; font-size: clamp(27px, 7.8vw, 38px); line-height: 1; letter-spacing: -.06em }
-.state-panel p { margin: 0; color: var(--scheme-muted); font-size: 11px; font-weight: 650 }
+.state-panel h1 { margin: 8px 0 5px; font: 800 clamp(20px, 6vw, 28px)/1 var(--mono); letter-spacing: -.02em }
 .state-panel:after { content: ""; display: block; width: 116px; height: 3px; margin: 13px auto 0; background: linear-gradient(90deg, var(--scheme-primary) 0 28%, color-mix(in srgb, var(--scheme-primary) 17%, transparent) 28%) }
-.terminal-id { display: none; position: absolute; z-index: 5; inset: 76px 24px 86px; align-content: center; padding: 22px; border: 1px solid var(--scheme-primary); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 94%, transparent); box-shadow: 0 16px 50px color-mix(in srgb, var(--scheme-text) 17%, transparent); backdrop-filter: blur(20px); font-family: var(--mono) }
-.state-booting .terminal-id { display: grid; animation: boot-card 2.2s ease both }
-.terminal-id pre { margin: 0 0 20px; overflow: hidden; color: var(--scheme-primary); font: 700 clamp(7px, 2vw, 11px)/1.25 var(--mono); white-space: pre }
-.terminal-id dl { margin: 0; padding: 10px 13px; border: 1px solid var(--scheme-outline); border-radius: 10px }
-.terminal-id dl div { display: grid; grid-template-columns: 80px 1fr; padding: 4px 0; font-size: 9px }
-.terminal-id dt { color: var(--scheme-muted) }
-.terminal-id dd { margin: 0; text-align: right; font-weight: 800 }
 .controls { display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 8px 6px 5px; border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 62%, transparent) }
 .system-flags { display: flex; gap: 12px; color: var(--scheme-muted); font: 700 6px/1 var(--mono); letter-spacing: .08em }
 .system-flags span:before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 5px 1px 0; border-radius: 50%; background: var(--scheme-primary) }
@@ -57,7 +47,6 @@ button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 8
 .warning { color: var(--scheme-error); font: 800 7px/1 var(--mono) }
 .state-waking .core-stage { animation: wake-flash .7s ease-out }
 .state-listening .shell:before, .state-listening:before { box-shadow: inset 0 0 35px color-mix(in srgb, var(--scheme-primary) 14%, transparent) }
-.state-approval .core-mark { transform: rotate(45deg) }
 .state-error .state-panel small, .state-offline .state-panel small { color: var(--scheme-error) }
 .state-sleep { animation: drift 240s linear infinite alternate }
 .debug { position: absolute; z-index: 20; inset: 14px; overflow: auto; padding: 16px; border: 1px solid var(--scheme-outline); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 96%, transparent); box-shadow: 0 18px 55px color-mix(in srgb, var(--scheme-text) 18%, transparent); backdrop-filter: blur(24px); font: 10px/1.5 var(--mono) }
@@ -66,7 +55,6 @@ button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 8
 .settings input { display: block; width: 58px; margin-top: 3px; border: 1px solid var(--scheme-outline); border-radius: 6px; background: var(--scheme-surface); padding: 4px }
 .debug ol { padding-left: 18px }.debug li { color: var(--scheme-muted) }.debug li.accepted { color: var(--scheme-primary) }
 @keyframes wake-flash { 0% { filter: brightness(2.2) } 100% { filter: brightness(1) } }
-@keyframes boot-card { 0% { opacity: 0; transform: scale(.97) } 18%, 82% { opacity: 1; transform: scale(1) } 100% { opacity: 0 } }
 @keyframes drift { to { transform: translate(4px, 5px) } }
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important } }
 @media (orientation: landscape) {

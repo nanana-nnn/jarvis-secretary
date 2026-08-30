@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -11,24 +11,24 @@
     <title>JARVIS Secretary</title>
   </head>
   <body>
-    <div id="boot-status" style="box-sizing:border-box;min-height:100vh;padding:2rem;background:#0d0b0a;color:#efe7da;font:16px system-ui">JARVISを読み込んでいます…</div>
+    <div id="boot-status" style="box-sizing:border-box;min-height:100vh;padding:2rem;background:#0d0b0a;color:#efe7da;font:16px system-ui">LOADING JARVIS…</div>
     <div id="root"></div>
     <script>
       function showBootError(message) {
         var status = document.getElementById("boot-status");
         if (!status) return;
-        status.textContent = "起動エラー: " + message;
+        status.textContent = "BOOT ERROR: " + message;
         status.style.color = "#d8354c";
       }
       window.addEventListener("error", function (event) {
-        showBootError(event.message || "JavaScriptを読み込めませんでした");
+        showBootError(event.message || "failed to load JavaScript");
       });
       window.addEventListener("unhandledrejection", function (event) {
-        showBootError(String(event.reason || "初期化に失敗しました"));
+        showBootError(String(event.reason || "initialization failed"));
       });
       window.setTimeout(function () {
         var root = document.getElementById("root");
-        if (root && !root.childElementCount) showBootError("画面モジュールが起動しませんでした");
+        if (root && !root.childElementCount) showBootError("screen module did not start");
       }, 5000);
     </script>
     <script type="module" src="/src/main.tsx"></script>

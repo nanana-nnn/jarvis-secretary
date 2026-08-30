@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ReconnectingSocket, type SocketStatus } from "./api/socket";
 import { ClapDetector } from "./audio/clap-detector";
 import { ClapMicrophone } from "./audio/microphone";
-import { DEFAULT_CLAP_SETTINGS, type AudioMetrics, type ClapLog, type ClapSettings } from "./audio/types";
+import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
 import { DebugPanel } from "./components/DebugPanel";
 import { PixelCore } from "./components/PixelCore";
 import { transition } from "./states/machine";
@@ -43,23 +43,28 @@ const schemeVariables: Record<Exclude<keyof Scheme, "mode">, string> = {
 };
 
 /**
- * 状態ごとの表示文。
- * jp は日本語1行、en と code は英字。DESIGN.md の作法どおり同じ行に混ぜない。
+ * 状態ごとの表示文。DESIGN.md §15.1: 画面上の文字はすべて英語、短い状態名だけにする。
  * code は状態の系統が一目で分かるよう接頭辞を揃えてある（SYS / COM / AI / SEC / ERR / NET）。
  */
-type StateCopy = { jp: string; en: string; message: string; code: string };
+type StateCopy = { en: string; code: string };
 const copy: Record<SecretaryState, StateCopy> = {
-  BOOTING:      { jp: "起動シーケンス",   en: "INITIALIZING",  message: "秘書コアとLinuxホストを接続しています",   code: "SYS.00" },
-  SLEEP:        { jp: "待機しています",   en: "STANDBY",       message: "指の音を合図に、いつでも起動できます",     code: "SYS.01" },
-  WAKING:       { jp: "お呼びですか",     en: "AWAKENING",     message: "音声インターフェースを展開しています",     code: "SYS.02" },
-  LISTENING:    { jp: "話してください",   en: "LISTENING",     message: "あなたの声を聞いています",                 code: "COM.10" },
-  TRANSCRIBING: { jp: "言葉にしています", en: "TRANSCRIBING",  message: "音声をローカルで解析しています",           code: "COM.11" },
-  THINKING:     { jp: "考えています",     en: "REASONING",     message: "Vaultと現在の状況を照合しています",       code: "AI.20"  },
-  APPROVAL:     { jp: "確認してください", en: "AUTHORIZATION", message: "書き込みは承認されるまで実行しません",     code: "SEC.30" },
-  SPEAKING:     { jp: "回答します",       en: "RESPONDING",    message: "処理が完了しました",                       code: "COM.12" },
-  ERROR:        { jp: "問題を検知",       en: "RECOVERY",      message: "安全に停止し、復帰を試みています",         code: "ERR.90" },
-  OFFLINE:      { jp: "接続を待っています", en: "LINK OFFLINE", message: "Linuxホストへの再接続を続けています",     code: "NET.91" },
+  BOOTING:      { en: "INITIALIZING",  code: "SYS.00" },
+  SLEEP:        { en: "STANDBY",       code: "SYS.01" },
+  WAKING:       { en: "AWAKENING",     code: "SYS.02" },
+  LISTENING:    { en: "LISTENING",     code: "COM.10" },
+  TRANSCRIBING: { en: "TRANSCRIBING",  code: "COM.11" },
+  THINKING:     { en: "REASONING",     code: "AI.20"  },
+  APPROVAL:     { en: "AUTHORIZATION", code: "SEC.30" },
+  SPEAKING:     { en: "RESPONDING",    code: "COM.12" },
+  ERROR:        { en: "RECOVERY",      code: "ERR.90" },
+  OFFLINE:      { en: "LINK OFFLINE",  code: "NET.91" },
 };
+
+// caelestia のロゴと同じ斜体端末風の字形・密度で JARVIS を表示する（DESIGN.md §15.1）
+const ASCII_JARVIS = `     __  ___    ____ _    _______ _____
+ __ / / /   |  / __ \\ |  / /  _/ ___/
+/ // / / /| | / /_/ / | / // / \\__ \\
+\\___/ /_/  |_/_/ |_| |___/___/____/`;
 
 // 手拍子の閾値は端末内に持つ。hfMin と mode は毎回上書きする
 // （2026-08-26 に指パッチン1回へ変更した値で、保存済みの古い設定に負けないようにするため）。
@@ -90,7 +95,6 @@ export default function App() {
   const [settings, setSettings] = useState<ClapSettings>(loadClapSettings);
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
-  const metricsRef = useRef<AudioMetrics>({ at: 0, rms: 0, hfRatio: 0, riseMs: 0 });
   // 検出コールバックは再生成しない（依存配列が空）ので、最新の状態は ref 経由で見る
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -107,7 +111,9 @@ export default function App() {
       if (last) socketRef.current?.send({ type: "clap.candidate", ...last });
     },
   ), []);
-  const microphone = useMemo(() => new ClapMicrophone(detector, metrics => { metricsRef.current = metrics; }), [detector]);
+  const microphone = useMemo(() => new ClapMicrophone(detector), [detector]);
+  // ドットパネルは requestAnimationFrame 内から直接読む（state 更新を挟まない）
+  const getBands = useMemo(() => () => microphone.readBands(), [microphone]);
 
   useEffect(() => { detector.update(settings); saveClapSettings(settings); }, [detector, settings]);
 
@@ -192,7 +198,7 @@ export default function App() {
 
   return <main className={`shell state-${view.toLowerCase()}`}>
     <header className="topbar">
-      <div className="brand"><b>JARVIS</b><span>LOCAL INTELLIGENCE</span></div>
+      <pre className="ascii-logo" aria-label="JARVIS">{ASCII_JARVIS}</pre>
       <div className={`pc-link ${connected ? "online" : ""}`}>
         <span className="signal" />
         <div><strong>{connected ? "LINKED" : "OFFLINE"}</strong><small>{telemetry.host.toUpperCase()}</small></div>
@@ -201,38 +207,22 @@ export default function App() {
 
     <section className="core-stage">
       <div className="grid-field" aria-hidden="true" />
-      <PixelCore state={view} metricsRef={metricsRef} />
-      <span className="core-mark" aria-hidden="true">J</span>
+      <PixelCore state={view} getBands={getBands} />
     </section>
 
     <section className="state-panel">
-      <small>{content.code} / {content.en}</small>
-      <h1>{content.jp}</h1>
-      <p>{content.message}</p>
-    </section>
-
-    <section className="terminal-id" aria-label="JARVIS システム情報">
-      <pre>{`     __  ___    ____ _    _______ _____
- __ / / /   |  / __ \\ |  / /  _/ ___/
-/ // / / /| | / /_/ / | / // / \\__ \\
-\\___/ /_/  |_/_/ |_| |___/___/____/`}</pre>
-      <dl>
-        <div><dt>CORE</dt><dd>JARVIS</dd></div>
-        <div><dt>HOST</dt><dd>{telemetry.host}</dd></div>
-        <div><dt>SYSTEM</dt><dd>CachyOS / Hyprland</dd></div>
-        <div><dt>MEMORY</dt><dd>Start Vault</dd></div>
-        <div><dt>INPUT</dt><dd>SNAP + VOICE</dd></div>
-      </dl>
+      <small>{content.code}</small>
+      <h1>{content.en}</h1>
     </section>
 
     <footer className="controls">
       <div className="system-flags"><span>VAULT 5</span><span>LAN SECURE</span><span>NO CLOUD</span></div>
       <div className="actions">
           {mic !== "on"
-            ? <button className="primary-action" onClick={enableMic}>マイクを有効にする</button>
+            ? <button className="primary-action" onClick={enableMic}>ENABLE MIC</button>
             : <span className="mic-live">● MIC LIVE</span>}
           {mic === "denied" ? <span className="warning">MIC DENIED</span> : null}
-          <button className="debug-action" onClick={() => setDebug(value => !value)} aria-label="検出ログ">•••</button>
+          <button className="debug-action" onClick={() => setDebug(value => !value)} aria-label="DEBUG LOG">•••</button>
       </div>
     </footer>
     {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} /> : null}

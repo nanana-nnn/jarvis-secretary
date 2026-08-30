@@ -1,14 +1,19 @@
 import { useEffect, useRef } from "react";
-import type { RefObject } from "react";
-import type { AudioMetrics } from "../audio/types";
 import type { SecretaryState } from "../states/types";
 
-type Props = { state: SecretaryState; metricsRef: RefObject<AudioMetrics> };
+type Props = { state: SecretaryState; getBands: () => Float32Array | null };
 
-const ACTIVE_AUDIO = new Set<SecretaryState>(["LISTENING", "TRANSCRIBING"]);
+const BAR_COUNT = 20; // sysmon-dots.py の cava 設定 BARS=20 に合わせる
+const GRID = 33;
 
-export function PixelCore({ state, metricsRef }: Props) {
+/**
+ * DESIGN.md §15.1 の移植対象: ~/.config/caelestia/sysmon-dots.py。
+ * 中心からの極座標へ変換し、|dx| をバー番号へ割り当てて左右対称にする（元コードのまま）。
+ * 半径は同じ `0.30 + level * 0.72`。単一 rms で円を拡大縮小するだけの実装はしない。
+ */
+export function PixelCore({ state, getBands }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const bands = useRef(new Float32Array(BAR_COUNT));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -16,7 +21,6 @@ export function PixelCore({ state, metricsRef }: Props) {
     const context = canvas.getContext("2d");
     if (!context) return;
     let frame = 0;
-    let smoothed = 0;
     const started = performance.now();
 
     const draw = (now: number) => {
@@ -35,44 +39,43 @@ export function PixelCore({ state, metricsRef }: Props) {
         ? style.getPropertyValue("--scheme-error").trim()
         : style.getPropertyValue("--scheme-primary").trim();
       const elapsed = (now - started) / 1000;
-      const metrics = metricsRef.current;
-      const live = ACTIVE_AUDIO.has(state) ? Math.min(1, metrics.rms * 16) : 0;
-      smoothed += (live - smoothed) * (live > smoothed ? .28 : .08);
 
-      let energy = .08 + Math.sin(elapsed * 1.3) * .025;
-      if (state === "WAKING") energy = .82 * Math.max(0, 1 - (now - started) / 700);
-      else if (state === "LISTENING") energy += smoothed * .95;
-      else if (state === "TRANSCRIBING") energy = .24 + Math.sin(elapsed * 8) * .08;
-      else if (state === "THINKING") energy = .34 + Math.sin(elapsed * 3.8) * .12;
-      else if (state === "SPEAKING") energy = .44 + Math.sin(elapsed * 9) * .18 + Math.sin(elapsed * 4.1) * .1;
-      else if (state === "APPROVAL") energy = .25;
-      else if (state === "OFFLINE" || state === "ERROR") energy = -.18;
+      // マイクが立っていれば実測20帯域。無ければ帯域ごとに位相をずらした疑似値で、
+      // ここでも「単一値で円を拡大縮小」にしない
+      const live = getBands();
+      for (let i = 0; i < BAR_COUNT; i += 1) {
+        const target = live ? live[i] : 0.12 + 0.10 * Math.sin(elapsed * (1.1 + i * 0.19) + i);
+        const current = bands.current[i];
+        bands.current[i] = current + (target - current) * (target > current ? 0.35 : 0.12);
+      }
 
-      const columns = 33;
-      const rows = 33;
-      const cell = Math.min(width / columns, height / rows);
-      const gridWidth = cell * columns;
-      const gridHeight = cell * rows;
-      const offsetX = (width - gridWidth) / 2;
-      const offsetY = (height - gridHeight) / 2;
-      const high = metrics.hfRatio || 0;
+      let boost = 0;
+      if (state === "WAKING") boost = 0.55 * Math.max(0, 1 - (now - started) / 700);
+      else if (state === "THINKING") boost = 0.14 + Math.sin(elapsed * 3.8) * 0.06;
+      else if (state === "SPEAKING") boost = 0.18 + Math.sin(elapsed * 9) * 0.08;
+      else if (state === "APPROVAL") boost = 0.1;
+      else if (state === "OFFLINE" || state === "ERROR") boost = -0.14;
+
+      const cell = Math.min(width, height) / GRID;
+      const gridSize = cell * GRID;
+      const offsetX = (width - gridSize) / 2;
+      const offsetY = (height - gridSize) / 2;
+      const centre = (GRID - 1) / 2;
       context.fillStyle = colour || "#1b696f";
 
-      for (let y = 0; y < rows; y += 1) {
-        for (let x = 0; x < columns; x += 1) {
-          const dx = (x - (columns - 1) / 2) / (columns / 2);
-          const dy = (y - (rows - 1) / 2) / (rows / 2);
-          const distance = Math.hypot(dx, dy);
-          const angle = Math.atan2(dy, dx);
-          const voiceRipple = Math.sin(angle * 5 + elapsed * 4) * smoothed * .2;
-          const thinkingTrace = state === "THINKING" ? Math.sin(x * .72 + y * .43 + elapsed * 5) * .11 : 0;
-          const speakingWave = state === "SPEAKING" ? Math.sin(angle * 8 - elapsed * 10) * .12 : 0;
-          const spectralEdge = high * Math.cos(angle * 7) * .09;
-          let radius = .34 + energy * .42 + voiceRipple + thinkingTrace + speakingWave + spectralEdge;
-          if (state === "APPROVAL") radius += Math.abs(dx) > .08 ? .08 : -.16;
-          if (distance <= radius) {
+      for (let y = 0; y < GRID; y += 1) {
+        const dy = (y - centre) / centre;
+        for (let x = 0; x < GRID; x += 1) {
+          const dx = (x - centre) / centre;
+          const dist = Math.hypot(dx, dy);
+          const ang = Math.abs(dx);
+          const t = dist > 0 ? ang / dist : 0;
+          const idx = Math.min(BAR_COUNT - 1, Math.floor(t * (BAR_COUNT - 1)));
+          const level = Math.min(1, Math.max(0, bands.current[idx] + boost));
+          const radius = 0.30 + level * 0.72;
+          if (dist <= radius) {
             const inset = Math.max(1, cell * .11);
-            const alpha = Math.max(.28, 1 - distance * .38);
+            const alpha = Math.max(.3, 1 - dist * .32);
             context.globalAlpha = alpha;
             context.fillRect(offsetX + x * cell + inset, offsetY + y * cell + inset, Math.max(1, cell - inset * 2), Math.max(1, cell - inset * 2));
           }
@@ -83,7 +86,7 @@ export function PixelCore({ state, metricsRef }: Props) {
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [metricsRef, state]);
+  }, [getBands, state]);
 
-  return <canvas ref={canvasRef} className="pixel-core" aria-label="JARVIS 音声反応コア" />;
+  return <canvas ref={canvasRef} className="pixel-core" aria-label="JARVIS voice-reactive core" />;
 }
