@@ -10,8 +10,9 @@ export function Secretary({ state }: { state: SecretaryState }) {
   const awake = OPEN_EYED.includes(state);
   return <div className="face">
     <div className="face-frame">
-      <img src="/assets/secretary-sleep.png" alt="" />
-      <img className={awake ? "awake" : ""} src="/assets/secretary-awake.png" alt="" />
+      <img src="/assets/secretary-sleep.webp" alt="" />
+      <img className={awake ? "awake" : ""} src="/assets/secretary-awake.webp" alt="" />
+      <div className="iris-pulse" aria-hidden="true" />
       <div className="face-feather" aria-hidden="true" />
       <div className="face-marks" aria-hidden="true"><i /><i /><i /><i /></div>
     </div>

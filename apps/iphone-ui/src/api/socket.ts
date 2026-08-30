@@ -7,7 +7,11 @@ export class ReconnectingSocket {
   private stopped = false;
   private heartbeat?: number;
 
-  constructor(private readonly url: string, private readonly onStatus: (status: SocketStatus) => void) {}
+  constructor(
+    private readonly url: string,
+    private readonly onStatus: (status: SocketStatus) => void,
+    private readonly onMessage?: (message: unknown) => void,
+  ) {}
 
   start(): void { this.stopped = false; this.connect(); }
   stop(): void { this.stopped = true; window.clearTimeout(this.timer); window.clearInterval(this.heartbeat); this.socket?.close(); }
@@ -26,6 +30,9 @@ export class ReconnectingSocket {
       this.retry = 0;
       this.onStatus("open");
       this.heartbeat = window.setInterval(() => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ type: "connection.ping" })), 15000);
+    });
+    socket.addEventListener("message", event => {
+      try { this.onMessage?.(JSON.parse(String(event.data))); } catch { /* Ignore malformed server events. */ }
     });
     socket.addEventListener("close", () => {
       window.clearInterval(this.heartbeat);

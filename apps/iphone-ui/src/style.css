@@ -1,21 +1,28 @@
 /* JARVIS Secretary — iPhone 常設画面
  *
- * 配色と作法は ~/dev/jarvis-secretary-video/design.md に合わせる:
- *   骨色 + クリムゾン / 温かい黒。アクセントは面で塗らず線・点で効かせる。
- *   紫グラデ・ネオン・gradient text は使わない。
+ * 2026-08-30 の全面プリズム素材向け。色は絵に持たせ、UIは白の透明度だけで組む。
+ *
+ * 素材が変わったので design.md（jarvis-secretary-video）の
+ * 「骨色＋クリムゾン／温かい黒」はこの画面には当てない。
+ * 引き継いだ原則は次の3つ:
+ *   - アクセントは面で塗らず、線と点で効かせる
+ *   - gradient text を使わない
+ *   - 明るい面を大きく置かない（OLED 常設・DESIGN.md §16）
+ *
+ * 例外は caelestia の primary を受けるビーコンと tick 先頭、警告色だけ。
+ *
  * 書体は端末内蔵のみ（LAN内で完結させるため Web フォントを読まない）。
- * 横向き固定・OLED 常設が前提なので、明るい面を大きく置かない。
  */
 
 :root {
-  --bg: #0d0b0a;          /* 温かい黒。純黒にしない */
-  --panel: #17130f;
-  --fg: #efe7da;          /* 骨色 */
-  --fg-dim: #9c9184;
-  --rule: #332a24;
-  --accent: #d8354c;      /* 実機UIのクリムゾン */
-  --accent-deep: #5e1522;
-  --violet: #7b6cff;      /* THINKING の瞳だけ（DESIGN.md §15） */
+  --bg: #05060a;
+  --panel: #0b0c10;
+  --fg: rgba(255,255,255,.94);
+  --fg-dim: rgba(255,255,255,.62);
+  --fg-faint: rgba(255,255,255,.36);
+  --rule: rgba(255,255,255,.14);
+  --tint: var(--fg);
+  --warn: #ff5f6b;        /* 警告専用。他では使わない */
 
   --sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, "JetBrains Mono", monospace;
@@ -41,17 +48,20 @@ main {
 }
 
 /* ── 顔（右）────────────────────────────────────────────
-   位置と画角は状態で動かさない。変わるのは目と、枠の計器だけ。 */
-.face { grid-column: 2; grid-row: 1; position: relative; overflow: hidden }
-.face-frame { position: absolute; inset: 0 }
+   位置と画角は状態で動かさない（§15）。
+   sleep/awake の2枚は同一画角で撮られており、実測でオフセット 0 なので
+   object-position は共通で足りる。 */
+.face { grid-column: 2; grid-row: 1; position: relative }
+/* 画像と虹彩パルスのクリップは .face-frame が持つ。 */
+.face-frame { position: absolute; inset: 0; overflow: hidden }
 .face img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: 62% 50%;
-  transition: opacity 250ms ease, filter 700ms ease;   /* §15: 150〜250ms のクロスフェード */
+  object-position: 38% 44%;
+  transition: opacity 220ms ease, filter 700ms ease;   /* §15: 150〜250ms */
 }
 .face img + img { opacity: 0 }
 .face img + img.awake { opacity: 1 }
@@ -62,8 +72,21 @@ main {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, var(--bg) 0 6%, rgba(13, 11, 10, .55) 22%, transparent 46%),
-    linear-gradient(0deg, rgba(13, 11, 10, .5), transparent 26%);
+    linear-gradient(90deg, var(--bg) 0 18%, rgba(5, 6, 10, .96) 30%, rgba(5, 6, 10, .72) 45%, transparent 68%),
+    linear-gradient(0deg, rgba(5, 6, 10, .62), transparent 32%),
+    linear-gradient(180deg, rgba(5, 6, 10, .52), transparent 22%);
+}
+
+/* THINKING時だけ、同じawake画像の虹彩部分を高彩度で重ねる。 */
+.iris-pulse {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: url("/assets/secretary-awake.webp") 38% 44% / cover no-repeat;
+  filter: saturate(1.45);
+  -webkit-mask-image: radial-gradient(circle 9% at 35% 40%, #000 0 55%, transparent 100%);
+  mask-image: radial-gradient(circle 9% at 35% 40%, #000 0 55%, transparent 100%);
+  opacity: 0;
 }
 
 /* レジストレーションマーク（計器の細部） */
@@ -101,15 +124,15 @@ main {
   font: 600 clamp(7px, 1.1vw, 10px)/1 var(--mono);
   letter-spacing: .2em;
 }
-.rail-tail { margin-left: auto; padding-right: 4px; color: #6d6459 }
+.rail-tail { margin-left: auto; padding-right: 4px; color: var(--fg-faint) }
 .beacon {
   width: 5px; height: 5px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-deep);
+  background: var(--tint);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--tint) 70%, transparent);
   animation: beat 2.4s ease-in-out infinite;
 }
-.beacon.cold { background: #4b433b; box-shadow: none; animation: none }
+.beacon.cold { background: #39404d; box-shadow: none; animation: none }
 
 .readout { margin-top: auto }
 h1 {
@@ -124,7 +147,7 @@ h1 {
   width: 34%;
   height: 1px;
   margin: 12px 0 10px;
-  background: linear-gradient(90deg, var(--accent) 0 22%, var(--rule) 22%);
+  background: linear-gradient(90deg, var(--tint) 0 22%, var(--rule) 22%);
   transition: width 600ms ease;
 }
 .readout p {
@@ -138,7 +161,7 @@ h1 {
 /* 表示する数値は実装の値だけ（作らない） */
 .gauges { display: flex; gap: clamp(10px, 2.4vw, 26px); margin: 0 }
 .gauges div { display: flex; flex-direction: column; gap: 3px }
-.gauges dt { color: #6d6459; font: 600 clamp(6px, .95vw, 9px)/1 var(--mono); letter-spacing: .18em }
+.gauges dt { color: var(--fg-faint); font: 600 clamp(6px, .95vw, 9px)/1 var(--mono); letter-spacing: .18em }
 .gauges dd { margin: 0; color: var(--fg); font: 400 clamp(10px, 1.6vw, 15px)/1 var(--mono) }
 
 .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
@@ -150,37 +173,37 @@ button {
   font-size: clamp(10px, 1.4vw, 13px);
   letter-spacing: .02em;
 }
-.key { border-color: color-mix(in srgb, var(--accent) 62%, transparent); color: var(--fg) }
-.key::before { content: ""; display: inline-block; width: 4px; height: 4px; margin-right: 9px; border-radius: 50%; background: var(--accent); vertical-align: middle }
+.key { border-color: var(--rule); color: var(--fg) }
+.key::before { content: ""; display: inline-block; width: 4px; height: 4px; margin-right: 9px; border-radius: 50%; background: var(--fg); vertical-align: middle }
 .ghost { color: var(--fg-dim); font: 600 clamp(8px, 1.1vw, 11px)/1 var(--mono); letter-spacing: .16em; padding: 9px 12px }
-.warn { color: var(--accent); font: 600 clamp(8px, 1.1vw, 11px)/1 var(--mono); letter-spacing: .12em }
+.warn { color: var(--warn); font: 600 clamp(8px, 1.1vw, 11px)/1 var(--mono); letter-spacing: .12em }
 
 /* ── 状態ごとの差 ───────────────────────────────────── */
-/* 待機：暗く落とし、数px単位でゆっくり動かす（OLED 焼き付き防止・§15） */
-.state-sleep .face img { filter: brightness(.42) contrast(1.04) }
-.state-sleep h1 { color: #b3a89a }
+/* 待機：大きく落とす。新しい素材は元より明るいので、旧 .42 では明るすぎる。
+   数px単位でゆっくり動かす（OLED 焼き付き防止・§15） */
+.state-sleep .face img { filter: brightness(.17) saturate(.2) }
+.state-sleep h1 { color: var(--fg-dim) }
 .state-sleep .tick { width: 18% }
 .state-sleep { animation: drift 240s linear infinite alternate }
 
-.state-booting .face img, .state-offline .face img, .state-error .face img { filter: brightness(.34) saturate(0) }
-.state-offline h1, .state-error h1 { color: #8d8579 }
-.state-error .tick, .state-offline .tick { background: linear-gradient(90deg, #6d6459 0 22%, var(--rule) 22%) }
+.state-booting .face img, .state-offline .face img, .state-error .face img { filter: brightness(.17) saturate(0) }
+.state-offline h1, .state-error h1 { color: var(--fg-dim) }
+.state-error .tick, .state-offline .tick { background: linear-gradient(90deg, var(--fg-faint) 0 22%, var(--rule) 22%) }
 
-.state-waking .face img, .state-listening .face img { filter: brightness(1.02) contrast(1.06) }
+/* 目が開いている間は素材を素の明るさに戻す */
+.state-waking .face img, .state-listening .face img,
+.state-transcribing .face img, .state-thinking .face img,
+.state-approval .face img, .state-speaking .face img { filter: brightness(1) contrast(1.04) }
+
 .state-waking .tick, .state-listening .tick { width: 62% }
 .state-listening .beacon { animation-duration: 1s }
 
-/* THINKING のときだけ瞳へ弱い紫（DESIGN.md §15）。面では塗らない */
-.state-thinking .face-frame::after {
-  content: "";
-  position: absolute;
-  left: 47%; top: 27%;
-  width: 15%; aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--violet) 42%, transparent), transparent 68%);
-  mix-blend-mode: screen;
-  animation: beat 1.6s ease-in-out infinite;
-}
+/* 色相は足さず、虹彩の彩度だけを1.6秒周期で深くする。 */
+.state-thinking .iris-pulse { animation: iris-beat 1.6s ease-in-out infinite }
+.state-thinking .tick { width: 46% }
+
+/* APPROVAL は止まって待つ状態。線を伸ばしきり、光は脈打たせない */
+.state-approval .tick { width: 100%; background: linear-gradient(90deg, var(--tint) 0 62%, var(--rule) 62%) }
 
 /* ── デバッグ（検出ログ）────────────────────────────── */
 /* 顔の側に重ねる。調整中も左の状態表示を隠さない */
@@ -194,12 +217,12 @@ button {
   overflow: auto;
   padding: 10px 12px;
   border: 1px solid var(--rule);
-  background: rgba(23, 19, 15, .92);
+  background: rgba(11, 14, 21, .92);
   backdrop-filter: blur(14px);
   font: 400 10px/1.5 var(--mono);
 }
 .settings { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--rule) }
-.settings label { color: #6d6459; font-size: 8px; letter-spacing: .16em }
+.settings label { color: var(--fg-faint); font-size: 8px; letter-spacing: .16em }
 .settings input {
   display: block;
   width: 56px;
@@ -207,15 +230,16 @@ button {
   padding: 3px 4px;
   border: 1px solid var(--rule);
   border-radius: 2px;
-  background: #12100e;
+  background: #090c12;
   color: var(--fg);
   font: inherit;
 }
 .debug ol { margin: 0; padding-left: 16px }
 .debug li { margin: 2px 0; color: var(--fg-dim) }
-.debug li.accepted { color: var(--accent) }
+.debug li.accepted { color: var(--fg) }
 
 @keyframes beat { 50% { opacity: .35 } }
+@keyframes iris-beat { 0%, 100% { opacity: 0 } 50% { opacity: 1 } }
 @keyframes drift { to { transform: translate(6px, 4px) } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -227,7 +251,7 @@ button {
   main { grid-template-columns: 1fr; grid-template-rows: 46fr 54fr }
   .face { grid-column: 1; grid-row: 1 }
   .console { grid-column: 1; grid-row: 2; padding-right: 18px }
-  .face-feather { background: linear-gradient(0deg, var(--bg) 0 6%, rgba(13, 11, 10, .5) 24%, transparent 52%) }
+  .face-feather { background: linear-gradient(0deg, var(--bg) 0 6%, rgba(5, 7, 12, .52) 24%, transparent 54%) }
   .face-marks i:nth-child(3), .face-marks i:nth-child(4) { left: 12px }
   .debug { top: auto; left: 12px; width: auto; max-height: 54% }
 }

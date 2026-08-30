@@ -56,6 +56,12 @@ export default function App() {
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     const socket = new ReconnectingSocket(`${protocol}://${location.host}/ws`, (status: SocketStatus) => {
       if (status === "open") send("CONNECTED"); else if (status === "closed") send("DISCONNECTED");
+    }, message => {
+      if (!message || typeof message !== "object") return;
+      const event = message as { type?: unknown; primary?: unknown };
+      if (event.type === "scheme.changed" && typeof event.primary === "string" && /^#[0-9a-f]{6}$/i.test(event.primary)) {
+        document.documentElement.style.setProperty("--tint", event.primary);
+      }
     });
     socketRef.current = socket;
     socket.start(); return () => { socketRef.current = null; socket.stop(); };
@@ -67,8 +73,12 @@ export default function App() {
   }, [state]);
   async function enableMic() { try { await microphone.start(); setMic("on"); } catch { setMic("denied"); send("SYSTEM_ERROR"); } }
 
-  // 開発時のみ ?state=LISTENING で任意の状態を描画する（配線は変えず見た目だけ差し替える）
-  const params = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
+  // ?state=LISTENING で任意の状態を描画する（配線は変えず見た目だけ差し替える）。
+  // dev サーバー、または VITE_PREVIEW=1 を付けて建てたビルドでだけ有効。
+  // iPhone での見た目確認は dev サーバーではなく静的ビルドで行うため（README「実機確認」）、
+  // ビルドにも口が要る。VITE_PREVIEW を付けない通常の本番ビルドでは無効のまま。
+  const previewable = import.meta.env.DEV || import.meta.env.VITE_PREVIEW === "1";
+  const params = previewable ? new URLSearchParams(location.search) : null;
   const preview = params?.get("state")?.toUpperCase() as SecretaryState | undefined;
   const view = preview && preview in labels ? preview : state;
   const showDebug = debug || params?.get("debug") === "1";
