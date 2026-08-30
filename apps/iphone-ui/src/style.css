@@ -102,7 +102,7 @@ button { font: inherit; color: inherit }
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: 43% 45%;              /* 2枚は同一画角なので共通で足りる（§15）*/
+  object-position: 38% 44%;              /* §15 の指定値。2枚は同一画角なので共通で足りる */
   transition: opacity .22s ease, filter .7s ease;   /* §15 の 150〜250ms に収める */
   filter: brightness(.78) saturate(1.18) contrast(1.08);
 }
@@ -145,7 +145,7 @@ button { font: inherit; color: inherit }
 .iris-pulse {
   position: absolute;
   inset: 0;
-  background: url("/assets/secretary-awake.webp") 43% 45%/cover no-repeat;
+  background: url("/assets/secretary-awake.webp") 38% 44%/cover no-repeat;
   filter: saturate(1.8) brightness(1.15);
   mask-image: radial-gradient(circle 10% at 37% 40%, #000, transparent);
   -webkit-mask-image: radial-gradient(circle 10% at 37% 40%, #000, transparent);
@@ -273,19 +273,24 @@ button { border-radius: 0; border: 1px solid var(--line); background: rgba(255, 
 .edge-label { position: absolute; z-index: 4; right: 4px; top: 50%; writing-mode: vertical-rl; transform: translateY(-50%); color: rgba(255, 255, 255, .24); font: 700 5px/1 var(--mono); letter-spacing: .28em }
 
 /* ── 状態ごとの差 ──────────────────────────────── */
-/* 待機。§16 のため絵の輝度を落とす */
-.state-sleep .portrait-frame img { filter: brightness(.42) saturate(.65) contrast(1.08) }
+/* 待機。ここが一日の大半を占めるので §15 の指定どおりに落とす。
+   輝度 .17 / 彩度 .2 は「旧素材(L平均23%)で意図どおりだった実効輝度 9.7% を、
+   新素材(L平均57%)でも保つ」ために逆算した値。素材を替えたら計算し直す。 */
+.state-sleep .portrait-frame img { filter: brightness(.17) saturate(.2) contrast(1.08) }
 .state-sleep .scan-beam { animation-duration: 8s; opacity: .55 }
 
-/* ⚠ 2026-08-30 未修正のバグ。
-   .state-listening .shell は子孫セレクタだが、.shell と .state-listening は
-   同じ <main> なので永久に一致しない。LISTENING だけアクセント色が
-   切り替わらない（実測: 待機と同じ #1b696f のまま。APPROVAL の琥珀と
-   異常時の赤は main に直接当てているので効いている）。
-   直すなら .state-listening { --tint: var(--cyan) } に寄せる。
-   見た目が変わるので、判断を待って手を付けていない。 */
-.state-listening { --cyan: #85fff5 }
-.state-listening .shell { --tint: var(--cyan) }
+/* 焼き付き防止（§15「数ピクセル単位のゆっくりした位置移動」）。
+   240秒かけて 6px×4px。目では動きを追えない速さだが、
+   常時同じ画素を光らせ続けるのを避けられる。
+   危ないのは動く光り物ではなく、見出し・トンボ・カード枠のような
+   位置が固定された要素なので、画面ごと動かしている。 */
+.state-sleep { animation: drift 240s linear infinite alternate }
+
+/* LISTENING だけ明るい水色へ寄せる。
+   2026-08-30 修正: 元は `.state-listening .shell` と書かれていたが、
+   .shell と状態クラスは同じ <main> に付くため子孫セレクタが一致せず、
+   待機時と同じ色のままだった（実測 #1b696f）。同一要素へ直接当てる。 */
+.state-listening { --cyan: #85fff5; --tint: var(--cyan) }
 .state-listening .portrait-aura { animation: listen-ring 1s ease-out infinite }
 
 .state-thinking .hero-copy h1, .state-thinking .status-line { color: #fff }
@@ -321,6 +326,7 @@ button { border-radius: 0; border: 1px solid var(--line); background: rgba(255, 
 @keyframes iris { 0%, 100% { opacity: 0 } 50% { opacity: 1 } }
 @keyframes float { to { transform: translate(5vw, 3vh) scale(1.14) } }
 @keyframes spectral { 50% { transform: translateX(22%); opacity: .55 } }
+@keyframes drift { to { transform: translate(6px, 4px) } }
 @keyframes listen-ring { to { box-shadow: 0 0 0 25px transparent, 0 0 90px color-mix(in srgb, var(--tint) 12%, transparent) } }
 
 @media (prefers-reduced-motion: reduce) {
