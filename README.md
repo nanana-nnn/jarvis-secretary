@@ -24,6 +24,23 @@ npm run dev
 
 Open `https://<HOST>:5173` on the iPhone, trust the generated certificate, then tap **マイクを有効にする** once. Add the page to the Home Screen for standalone landscape use.
 
+## 外出先で、PCのブラウザだけで見る
+
+`.env` の `HOST` は自宅の LAN IP（`192.168.1.74`）で固定してある。**別のネットワークに
+いるとそのアドレスは自分に割り当たっていないので、サーバーは
+`[Errno 99] cannot assign requested address` で即死する。**
+
+`.env` も証明書も書き換えずに、`127.0.0.1` で建てるスクリプトを使う。
+
+```fish
+./scripts/serve-local.sh      # Ctrl-C でサーバーとプレビューの両方が止まる
+```
+
+`https://127.0.0.1:5173/` を開く。証明書は自宅IP向けなので名前が一致せず警告が出る。
+「詳細 → アクセスする」で通す。`?state=LISTENING` も使える。
+
+自宅へ戻ったら、この節は使わず下の「実機（iPhone）で見た目を確認する」に戻る。
+
 ## 実機（iPhone）で見た目を確認する
 
 **iPhone から使うポートは 5173 / 8787 に固定する。** ufw で LAN
