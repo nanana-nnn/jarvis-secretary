@@ -2,8 +2,10 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 import json
 import logging
+import os
 from pathlib import Path
 import re
+import socket as system_socket
 from time import monotonic_ns
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -29,6 +31,21 @@ def read_primary(path: Path) -> str | None:
     return f"#{value.lower()}" if isinstance(value, str) and HEX_COLOUR.fullmatch(value) else None
 
 
+def read_telemetry() -> dict[str, object]:
+    try:
+        memory = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, value = line.split(":", 1)
+            memory[key] = int(value.strip().split()[0])
+        used = 100 * (1 - memory["MemAvailable"] / memory["MemTotal"])
+        uptime_seconds = float(Path("/proc/uptime").read_text().split()[0])
+    except (OSError, KeyError, ValueError):
+        used, uptime_seconds = 0.0, 0.0
+    days, remainder = divmod(int(uptime_seconds), 86400)
+    hours = remainder // 3600
+    return {"type": "system.telemetry", "load": round(os.getloadavg()[0], 2), "memory": round(used, 1), "uptime": f"{days}D {hours}H", "host": system_socket.gethostname(), "ts": timestamp_ms()}
+
+
 def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCHEME_PATH) -> FastAPI:
     config = settings or Settings.from_env()
     clients: set[WebSocket] = set()
@@ -45,16 +62,28 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                         await client.send_json(event)
             await asyncio.sleep(1)
 
+    async def push_telemetry() -> None:
+        while True:
+            event = read_telemetry()
+            for client in tuple(clients):
+                with suppress(RuntimeError, WebSocketDisconnect):
+                    await client.send_json(event)
+            await asyncio.sleep(5)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = config
         watcher = asyncio.create_task(watch_scheme())
+        telemetry = asyncio.create_task(push_telemetry())
         try:
             yield
         finally:
             watcher.cancel()
+            telemetry.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
+            with suppress(asyncio.CancelledError):
+                await telemetry
 
     app = FastAPI(title="JARVIS Secretary", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -80,6 +109,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         await socket.send_json({"type": "connection.ready", "ts": timestamp_ms()})
         primary = read_primary(scheme_path) or "#ffffff"
         await socket.send_json({"type": "scheme.changed", "primary": primary, "ts": timestamp_ms()})
+        await socket.send_json(read_telemetry())
         try:
             while True:
                 message = await socket.receive_json()
