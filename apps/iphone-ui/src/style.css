@@ -19,16 +19,21 @@
 }
 * { box-sizing: border-box }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--scheme-bg) }
+/* iOS Safari は position:fixed / 100vh に「大きい方」のビューポートを使うので、
+   ツールバーの下に潜って下段が見切れる。実際に見えている高さ(dvh)で組む
+   （2026-08-31、実機で3段目の最終行が切れていた）*/
+@supports (height: 100dvh) { #root { height: 100dvh } }
 button { font: inherit; color: inherit }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
 
 /* sysmon の右列と同じ3段。上から fetch / dots / 状態（時計の代わり）*/
 /* 各段は中身の高さで決まり、余りは段の間へ配す（sysmon の3枚と同じ間合いにする）。
    1fr にすると2段目だけ間延びして、ドットの上下に大きな空きができる */
-/* 余りは3段目に吸わせる。2段目は縦横比で固定なので伸ばしても中に空きが出るだけ。
-   space-between だと下に隙間が残っていた（実機で約1cm）*/
+/* 3段目は中身なりの高さにして、余り(と不足)は2段目に持たせる。
+   2段目のキャンバスは max-height で縮めるので、画面が短い端末でも
+   3段目が見切れない（Safari のツールバーぶんで実際に溢れていた）*/
 .shell {
-  position: fixed; inset: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto;
+  position: relative; width: 100%; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 10px;
   padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   background: var(--scheme-bg); overflow: hidden;
@@ -41,8 +46,10 @@ button { font: inherit; color: inherit }
    全面発光は ~/dev/hyper のニュース動画と同じ作り（大きな面を強くぼかして
    低い不透明度で置き、ゆっくり拡縮させる）。色の遷移も向こうと同じ .8s。
    中身より背面に置く（amb-mask が背景色で塗るのでパネルを覆わせない）。
-   position:fixed なので grid の .shell の中にあってもセルを取らない */
-.amb { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: 26px }
+   absolute なので grid の .shell の中にあってもセルを取らない */
+/* .shell(position:relative) 基準。fixed だと iOS で大きい方のビューポートになり、
+   下がツールバーの下へ回り込む */
+.amb { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: 26px }
 
 /* 全面発光。対角に2枚 */
 .amb-blob {
@@ -62,7 +69,8 @@ button { font: inherit; color: inherit }
   animation: amb-spin 6s linear infinite;
   opacity: 0; transition: opacity .45s ease;
 }
-.amb-mask { position: absolute; inset: 7px; border-radius: 24px; background: var(--scheme-bg); transition: inset .5s ease }
+/* inset は動かさない。動かすと縁が食い込んでカードが縮んだように見える */
+.amb-mask { position: absolute; inset: 7px; border-radius: 24px; background: var(--scheme-bg) }
 
 /* 待機時の減光。テーマ色を薄く敷くので light/dark どちらでも濁らない。
    DESIGN.md §15「待機時は輝度を落とす」も兼ねる */
@@ -95,14 +103,13 @@ button { font: inherit; color: inherit }
 /* 待機は「暗くて光が走っていない」状態。起動から戻っても毎回ここへ戻す。
    走る光は起動と会話中だけのものにして、常設時は消しておく */
 .amb-sleep .amb-scrim { opacity: .16 }
-.amb-sleep .amb-ring { opacity: 0; animation: none }
-.amb-sleep .amb-blob { opacity: .06; animation: amb-blob-breathe 11s ease-in-out infinite }
+.amb-sleep .amb-ring { opacity: 0 !important; animation: none !important; transition: opacity .3s ease }
+.amb-sleep .amb-blob { opacity: .05 !important; animation: none !important; filter: blur(90px) !important; transition: opacity .4s ease }
 .amb-sleep .amb-blob-b { animation-duration: 14s; animation-delay: -3s }
 
 /* 起動: 減光を外し、縁と全面を一気に焚く */
 .amb-waking .amb-scrim { opacity: 0; transition-duration: .25s }
 .amb-waking .amb-ring { animation: amb-spin 1.1s linear, amb-ring-burst 1.1s ease-out both }
-.amb-waking .amb-mask { inset: 17px }
 .amb-waking .amb-blob { animation: amb-blob-burst 1.4s ease-out both, amb-hue .8s ease-in-out both }
 .amb-waking .amb-blob-b { animation-delay: .1s, .1s }
 .amb-waking .amb-ring { animation: amb-spin 1.1s linear, amb-ring-burst 1.1s ease-out both, amb-hue .8s ease-in-out both }
@@ -132,7 +139,7 @@ button { font: inherit; color: inherit }
 
 /* sysmon のパネルと同じ、角丸の薄いカード。縁の光より前面に置く */
 .panel, .controls { position: relative; z-index: 1 }
-.panel { border-radius: 18px; background: color-mix(in srgb, var(--scheme-surface) 55%, var(--scheme-bg)); overflow: hidden }
+.panel { border-radius: 18px; background: color-mix(in srgb, var(--scheme-surface) 55%, var(--scheme-bg)) }
 
 /* 1段目: fastfetch。ロゴも枠も37桁なので、37桁が画面幅に収まる字送りで頭打ちにする
    （37 * 0.6em * 15px = 333px < 366px）*/
@@ -144,7 +151,7 @@ button { font: inherit; color: inherit }
 .fetch-box { color: var(--scheme-muted) }
 
 /* 2段目: lavat のドット。実物のパネル(620x340px)と同じ比率 */
-.core-stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 10px }
+.core-stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 10px; overflow: hidden }
 .lava-core { width: 100%; aspect-ratio: 621 / 340; max-height: 100%; display: block }
 
 /* 3段目: tty-clock の位置。時計の代わりに状態と「今生きているもの」を出す。

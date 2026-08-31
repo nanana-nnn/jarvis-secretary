@@ -21,13 +21,14 @@ export type LiveFacts = {
 // アイコンは Nerd Font（同梱サブセット）。名前は app.py の WATCHED と対応する。
 // コードポイントは記憶で書かない。必ず描いて字を確かめてから入れる
 // （2026-08-31、md-brain のつもりが再生ボタン、sparkle のつもりが車になった）。
-// obsidian は宝石（Obsidian のロゴが宝石なので）、codex はロボット、claude は吹き出し
+// 2026-08-31 追記: Nerd Font に本物のロゴが入っていた。近いもので代用しない。
+// custom-obsidian / cod-openai(Codex は OpenAI) / cod-claude / fa-chrome はすべて実ロゴ
 const APPS: { key: string; icon: string; label: string }[] = [
-  { key: "obsidian", icon: "\u{f0877}", label: "obsidian" },
-  { key: "codex", icon: "\u{f06a9}", label: "codex" },
-  { key: "claude", icon: "\u{f12ca}", label: "claude" },
+  { key: "obsidian", icon: "\ue6bb", label: "obsidian" },
+  { key: "codex", icon: "\uec81", label: "codex" },
+  { key: "claude", icon: "\uec82", label: "claude" },
   { key: "chrome", icon: "\uf268", label: "chrome" },
-  { key: "term", icon: "\uf120", label: "terminal" },
+  { key: "term", icon: "\uea85", label: "terminal" },
 ];
 
 const PHONE = "\u{f011c}";
