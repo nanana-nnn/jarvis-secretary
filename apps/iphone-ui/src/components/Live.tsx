@@ -35,7 +35,7 @@ const PHONE = "\u{f011c}";
 const GIT = "\ue702";
 
 // state は表示名（"STANDBY" など）。状態機械の値そのものではない
-export function Live({ state, code, live }: { state: string; code: string; live: LiveFacts }) {
+export function Live({ state, code, live, caption }: { state: string; code: string; live: LiveFacts; caption?: string }) {
   // SNS に上げた小さい画像でも何のアイコンか分かるよう、下に名前を添える
   const dots = APPS.map(({ key, icon, label }) => {
     const app: AppState = live.apps[key] ?? { alive: false, busy: false };
@@ -53,7 +53,8 @@ export function Live({ state, code, live }: { state: string; code: string; live:
 
   return <section className="live panel">
     <h1>{state}</h1>
-    <small>{code}</small>
+    {/* 聞き取れた文。無いときは行ごと出さない（空欄で場所だけ取らない） */}
+    {caption ? <p className="caption">{caption}</p> : <small>{code}</small>}
     <div className="dots">{dots}</div>
     <div className="live-meta">
       <span className={live.phones > 0 ? "on" : ""}>{PHONE} {live.phones}</span>

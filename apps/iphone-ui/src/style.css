@@ -178,6 +178,7 @@ button { font: inherit; color: inherit }
    点灯はすべてサーバーの実測。飾りで光らせない */
 .live { display: grid; justify-items: center; align-content: center; gap: 6px; padding: 14px 12px 12px }
 .live h1 { margin: 0; font-size: clamp(24px, 8.6vw, 40px); font-weight: 700; line-height: 1; letter-spacing: .02em; color: var(--scheme-primary) }
+.caption { margin: 0; max-width: 96%; text-align: center; color: var(--scheme-text); font-size: clamp(11px, 3.6vw, 15px); line-height: 1.5 }
 .live small { color: var(--scheme-muted); font-size: clamp(8px, 2.7vw, 11px); letter-spacing: .18em }
 .state-error .live h1, .state-offline .live h1 { color: var(--scheme-error) }
 

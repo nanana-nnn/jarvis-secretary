@@ -182,6 +182,22 @@ def test_wallpaper_endpoint_answers_or_404() -> None:
         assert len(response.content) > 0
 
 
+def test_audio_frames_do_not_break_the_socket() -> None:
+    """binary フレームを受けても落ちない（§12「binary = PCM / text = JSON」）。
+
+    書き起こし自体はモデルを読むので、ここでは通り道だけを見る。
+    無音だけ送っても発話にならないので、audio.final は返らないのが正しい。
+    """
+    with TestClient(create_app(SETTINGS, NO_SCHEME)) as client:
+        with client.websocket_connect("/ws", headers={"origin": "https://phone.test"}) as socket:
+            receive_until(socket, "system.live")
+            for _ in range(50):                    # 20ms x 50 = 1秒ぶんの無音
+                socket.send_bytes(b"\x00\x00" * 320)
+            # 生きていることを ping で確かめる
+            socket.send_json({"type": "connection.ping"})
+            assert receive_until(socket, "connection.pong")
+
+
 def test_websocket_accepts_wake_candidate_log() -> None:
     with TestClient(create_app(SETTINGS, NO_SCHEME)) as client:
         with client.websocket_connect("/ws", headers={"origin": "https://phone.test"}) as socket:

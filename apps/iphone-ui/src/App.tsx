@@ -16,6 +16,7 @@ import type { SecretaryEvent, SecretaryState } from "./states/types";
 // LISTEN_IDLE_MS を過ぎると自分から待機へ戻る（言い忘れたまま起きっぱなしにしない）。
 const WAKE_ANIM_MS = 250;
 const LISTEN_IDLE_MS = 8000;
+const POST_SPEAK_IDLE_MS = 8000;   // §6 読み上げ後に待機へ戻る
 
 // サーバーから来る差し色を検査する。信頼せずに形だけ見る。
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -95,6 +96,8 @@ export default function App() {
   const [settings, setSettings] = useState<ClapSettings>(loadClapSettings);
   // 実測が届くまでは何も点灯させない（分からないものを「動いている」と出さない）
   const [live, setLive] = useState<LiveFacts>({ apps: {}, vault: { tracked: false, dirty: -1 }, phones: 0 });
+  // 聞き取り結果の字幕。空文字は「まだ何も無い」を表す
+  const [caption, setCaption] = useState("");
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
   // 検出コールバックは再生成しない（依存配列が空）ので、最新の状態は ref 経由で見る
@@ -113,7 +116,10 @@ export default function App() {
       if (last) socketRef.current?.send({ type: "clap.candidate", ...last });
     },
   ), []);
-  const microphone = useMemo(() => new ClapMicrophone(detector), [detector]);
+  // 録音した 16kHz PCM は binary フレームで送る（DESIGN.md §8/§12）
+  const microphone = useMemo(
+    () => new ClapMicrophone(detector, chunk => socketRef.current?.sendAudio(chunk)),
+    [detector]);
 
   useEffect(() => { detector.update(settings); saveClapSettings(settings); }, [detector, settings]);
 
@@ -153,6 +159,24 @@ export default function App() {
           const version = typeof event.version === "string" ? event.version : "";
           document.documentElement.style.setProperty(
             "--wallpaper", version ? `url("/wallpaper.webp?v=${version}")` : "none");
+        }
+
+        // 聞き取りが確定した（§12 audio.final）。字幕に出して読み上げへ進む
+        if (event.type === "audio.final" && typeof event.text === "string") {
+          setCaption(event.text);
+          send("AUDIO_FINAL");
+        }
+
+        // 書き起こしに失敗した。黙って戻らず理由を出す（§17）
+        if (event.type === "system.error") {
+          const message = typeof event.message === "string" ? event.message : "";
+          if (event.code === "STT_FAILED") {
+            setCaption(message || "聞き取れませんでした");
+            send("IDLE");
+          } else {
+            setCaption(message);
+            send("SYSTEM_ERROR");
+          }
         }
 
         // 3段目の実測（5秒間隔）。形が違うものは捨てて、前の値を残す
@@ -202,8 +226,15 @@ export default function App() {
     return () => clearInterval(id);
   }, [wakeEvery]);
 
+  // 録音は LISTENING の間だけ。待機中に送り続けない
+  useEffect(() => {
+    if (mic !== "on") return;
+    microphone.setRecording(state === "LISTENING");
+  }, [microphone, mic, state]);
+
   useEffect(() => {
     if (state === "WAKING") {
+      setCaption("");
       speechSynthesis.speak(new SpeechSynthesisUtterance("はい、どうしました？"));
       const id = setTimeout(() => send("WAKE_FINISHED"), WAKE_ANIM_MS);
       return () => clearTimeout(id);
@@ -212,11 +243,20 @@ export default function App() {
       const id = setTimeout(() => send("IDLE"), LISTEN_IDLE_MS);
       return () => clearTimeout(id);
     }
+    // Phase 2 はここまで。聞き取れた文をそのまま読み返して待機へ戻る。
+    // Phase 3 で Vault を読んだ回答に差し替える（いまは応答を作らない）
+    if (state === "TRANSCRIBING") {
+      const utterance = new SpeechSynthesisUtterance(caption);
+      utterance.lang = "ja-JP";
+      speechSynthesis.speak(utterance);
+      const id = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
+      return () => { clearTimeout(id); speechSynthesis.cancel(); };
+    }
     if (state === "ERROR") {
       const id = setTimeout(() => send("RETRY"), 5000);
       return () => clearTimeout(id);
     }
-  }, [state]);
+  }, [state, caption]);
 
   async function enableMic() {
     try {
@@ -243,7 +283,7 @@ export default function App() {
       <LavaCore state={view} />
     </section>
 
-    <Live state={content.en} code={content.code} live={live} />
+    <Live state={content.en} code={content.code} live={live} caption={caption} />
 
     <footer className="controls">
       <div className="system-flags"><span>VAULT 5</span><span>LAN SECURE</span><span>NO CLOUD</span></div>

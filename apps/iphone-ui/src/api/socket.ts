@@ -21,6 +21,18 @@ export class ReconnectingSocket {
     return true;
   }
 
+  /**
+   * 音声チャンクを binary フレームで送る（DESIGN.md §12）。
+   * 詰まっているときは捨てる。溜めても書き起こしは遅れるだけで、
+   * 古い音を後から送っても会話にならない。
+   */
+  sendAudio(chunk: ArrayBuffer): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    if (this.socket.bufferedAmount > 1 << 18) return false;   // 256KB 以上溜まったら捨てる
+    this.socket.send(chunk);
+    return true;
+  }
+
   private connect(): void {
     if (this.stopped) return;
     this.onStatus("connecting");

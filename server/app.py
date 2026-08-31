@@ -16,7 +16,9 @@ from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from .audio import SpeechSplitter
 from .config import Settings
+from .transcribe import Transcriber
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -289,6 +291,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     clients: set[WebSocket] = set()
     # busy 判定に使う直前の CPU 時間。アプリ単位で持つ（モジュール変数にしない）
     cpu_seen: dict[str, tuple[int, float]] = {}
+    # 書き起こしはモデルを常駐させるのでアプリに1つだけ持つ（§8）
+    transcriber = Transcriber()
 
     async def watch_scheme() -> None:
         previous = read_scheme(scheme_path)
@@ -393,23 +397,70 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         await socket.send_json(wallpaper_event())
         await socket.send_json(read_telemetry())
         await socket.send_json(live_event())
+        # §12「binary フレーム = 16kHz mono Int16 PCM」「text フレーム = JSON」
+        splitter = SpeechSplitter()
+
+        async def finish(utterance) -> None:
+            """確定した発話を書き起こして返す。失敗は黙って捨てず理由を送る。"""
+            logger.info("[STT] utterance %dms (%s)", utterance.ms, utterance.reason)
+            result = await transcriber.transcribe(utterance.pcm)
+            if result is None:
+                await socket.send_json({
+                    "type": "system.error", "code": "STT_UNAVAILABLE",
+                    "message": transcriber.error or "model not loaded",
+                    "retryable": False, "ts": timestamp_ms(),
+                })
+                return
+            logger.info("[STT] %dms → %r", result.ms, result.text[:60])
+            if not result.text:
+                # §17「聞き取れませんでした」と返して LISTENING へ戻す
+                await socket.send_json({
+                    "type": "system.error", "code": "STT_FAILED",
+                    "message": "聞き取れませんでした", "retryable": True, "ts": timestamp_ms(),
+                })
+                return
+            await socket.send_json({
+                "type": "audio.final", "text": result.text,
+                "ms": utterance.ms, "took": result.ms, "ts": timestamp_ms(),
+            })
+
         try:
             while True:
-                message = await socket.receive_json()
-                if message.get("type") == "connection.ping":
-                    await socket.send_json({"type": "connection.pong", "ts": timestamp_ms()})
-                elif message.get("type") == "clap.candidate":
-                    logger.info(
-                        "[WAKE] rms=%.3f hf=%.2f rise=%dms accepted=%s reason=%s",
-                        float(message.get("rms", 0)),
-                        float(message.get("hfRatio", 0)),
-                        int(message.get("riseMs", 0)),
-                        bool(message.get("accepted", False)),
-                        str(message.get("reason", "unknown")),
-                    )
+                packet = await socket.receive()
+                if packet.get("type") == "websocket.disconnect":
+                    break
+
+                # 音声チャンク（20ms ごと）。VAD が発話の切れ目を決める
+                chunk = packet.get("bytes")
+                if chunk:
+                    for utterance in splitter.feed(chunk):
+                        await finish(utterance)
+                    continue
+
+                text = packet.get("text")
+                if not text:
+                    continue
+                with suppress(json.JSONDecodeError):
+                    message = json.loads(text)
+                    if message.get("type") == "connection.ping":
+                        await socket.send_json({"type": "connection.pong", "ts": timestamp_ms()})
+                    elif message.get("type") == "clap.candidate":
+                        logger.info(
+                            "[WAKE] rms=%.3f hf=%.2f rise=%dms accepted=%s reason=%s",
+                            float(message.get("rms", 0)),
+                            float(message.get("hfRatio", 0)),
+                            int(message.get("riseMs", 0)),
+                            bool(message.get("accepted", False)),
+                            str(message.get("reason", "unknown")),
+                        )
+                    elif message.get("type") == "session.sleep":
+                        # 待機へ戻ったら、言いかけを持ち越さない
+                        splitter.reset()
         except WebSocketDisconnect:
             pass
         finally:
+            # 切断時に話しかけていた分は書き起こさない（返す先がもう無い）
+            splitter.flush()
             clients.discard(socket)
 
     return app
