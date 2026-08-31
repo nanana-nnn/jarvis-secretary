@@ -8,6 +8,7 @@ import { Ambience } from "./components/Ambience";
 import { Fetch, type Facts } from "./components/Fetch";
 import { LavaCore } from "./components/LavaCore";
 import { Live, type LiveFacts } from "./components/Live";
+import { SizeProbe } from "./components/SizeProbe";
 import { transition } from "./states/machine";
 import type { SecretaryEvent, SecretaryState } from "./states/types";
 
@@ -236,5 +237,6 @@ export default function App() {
       </div>
     </footer>
     {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} /> : null}
+    {params?.get("size") === "1" ? <SizeProbe /> : null}
   </main>;
 }
