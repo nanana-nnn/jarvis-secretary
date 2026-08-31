@@ -18,7 +18,61 @@ export class ClapMicrophone {
     private readonly onPcm?: (chunk: ArrayBuffer) => void,
   ) {}
 
+  /** マイクが実際に動いているか。止まっていれば理由を返す */
+  health(): { ok: boolean; context: string; track: string; muted: boolean } {
+    const track = this.stream?.getAudioTracks()[0];
+    const context = this.context?.state ?? "none";
+    return {
+      ok: context === "running" && track?.readyState === "live" && !track.muted,
+      context,
+      track: track?.readyState ?? "none",
+      muted: !!track?.muted,
+    };
+  }
+
+  /**
+   * 止まっていたら起こし直す。
+   *
+   * iOS は音声を再生すると録音セッションを中断することがある
+   * （DESIGN.md §20 が挙げている Apple の「アプリ停止時の音声セッション中断」）。
+   * 実機で、読み上げのあと指パッチンを一切拾わなくなった（2026-08-31）。
+   * resume() はユーザー操作なしでは拒まれることがあるので、
+   * 戻り値で「起こせなかった」ことが分かるようにしてある。
+   */
+  async ensureRunning(): Promise<boolean> {
+    if (!this.context) return false;
+    if (this.health().ok) return true;
+
+    // まず軽い方から。中断なら resume で戻ることもある
+    if (this.context.state !== "running") {
+      try { await this.context.resume(); } catch { /* 次の巡回でまた試す */ }
+    }
+    if (this.health().ok) return true;
+
+    // resume では戻らない。実機は context=interrupted / track.muted=true で、
+    // トラックは live のままだった（2026-08-31 のログ）。この形は
+    // 開き直さないと復帰しないので、getUserMedia から取り直す
+    try { await this.restart(); } catch { return false; }
+    return this.health().ok;
+  }
+
+  private async restart(): Promise<void> {
+    await this.stop();
+    this.context = undefined;
+    this.stream = undefined;
+    this.pcm = undefined;
+    await this.start();
+  }
+
   async start(): Promise<void> {
+    // 「再生しながら録音する」と宣言する。既定では読み上げのたびに iOS が
+    // 録音セッションを中断し、マイクがミュートされたまま戻らなくなる。
+    // Safari 16.4 以降。無い環境では黙って飛ばす
+    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+    if (session) {
+      try { session.type = "play-and-record"; } catch { /* 対応していなければ従来どおり */ }
+    }
+
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       video: false,

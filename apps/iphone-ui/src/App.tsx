@@ -98,6 +98,8 @@ export default function App() {
   const [live, setLive] = useState<LiveFacts>({ apps: {}, vault: { tracked: false, dirty: -1 }, phones: 0 });
   // 聞き取り結果の字幕。空文字は「まだ何も無い」を表す
   const [caption, setCaption] = useState("");
+  // マイクが止まったまま起こせない状態。ユーザー操作が要るので画面に出す
+  const [micStalled, setMicStalled] = useState(false);
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
   // 検出コールバックは再生成しない（依存配列が空）ので、最新の状態は ref 経由で見る
@@ -232,10 +234,30 @@ export default function App() {
     microphone.setRecording(state === "LISTENING");
   }, [microphone, mic, state]);
 
+  // マイクの見張り。iOS は読み上げで録音セッションを止めることがあり、
+  // 一度スリープすると指パッチンを拾わなくなっていた（2026-08-31 実機）。
+  // onend だけに頼らず、2秒ごとに生死を見て起こし直す。
+  // 起こせなかったときは画面に出す（黙って効かないままにしない）
+  useEffect(() => {
+    if (mic !== "on") return;
+    const id = setInterval(async () => {
+      const before = microphone.health();
+      if (before.ok) { setMicStalled(false); return; }
+      const revived = await microphone.ensureRunning();
+      setMicStalled(!revived);
+      socketRef.current?.send({ type: "mic.health", ...microphone.health(), revived });
+    }, 2000);
+    return () => clearInterval(id);
+  }, [microphone, mic]);
+
   useEffect(() => {
     if (state === "WAKING") {
       setCaption("");
-      speechSynthesis.speak(new SpeechSynthesisUtterance("はい、どうしました？"));
+      const hello = new SpeechSynthesisUtterance("はい、どうしました？");
+      hello.lang = "ja-JP";
+      // 読み上げが終わった直後に必ず起こし直す。iOS は再生で録音を止めることがある
+      hello.onend = () => { void microphone.ensureRunning(); };
+      speechSynthesis.speak(hello);
       const id = setTimeout(() => send("WAKE_FINISHED"), WAKE_ANIM_MS);
       return () => clearTimeout(id);
     }
@@ -248,6 +270,7 @@ export default function App() {
     if (state === "TRANSCRIBING") {
       const utterance = new SpeechSynthesisUtterance(caption);
       utterance.lang = "ja-JP";
+      utterance.onend = () => { void microphone.ensureRunning(); };
       speechSynthesis.speak(utterance);
       const id = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
       return () => { clearTimeout(id); speechSynthesis.cancel(); };
@@ -292,6 +315,7 @@ export default function App() {
             ? <button className="primary-action" onClick={enableMic}>ENABLE MIC</button>
             : <span className="mic-live">● MIC LIVE</span>}
           {mic === "denied" ? <span className="warning">MIC DENIED</span> : null}
+          {micStalled ? <button className="warning-action" onClick={() => { void microphone.ensureRunning(); }}>TAP TO RESUME MIC</button> : null}
           <button className="debug-action" onClick={() => setDebug(value => !value)} aria-label="DEBUG LOG">•••</button>
       </div>
     </footer>

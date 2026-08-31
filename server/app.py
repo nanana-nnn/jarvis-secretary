@@ -453,6 +453,13 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                             bool(message.get("accepted", False)),
                             str(message.get("reason", "unknown")),
                         )
+                    elif message.get("type") == "mic.health":
+                        # 実機のマイクが止まったときだけ届く。原因の切り分けに使う
+                        logger.warning(
+                            "[MIC] stalled context=%s track=%s muted=%s revived=%s",
+                            message.get("context"), message.get("track"),
+                            message.get("muted"), message.get("revived"),
+                        )
                     elif message.get("type") == "session.sleep":
                         # 待機へ戻ったら、言いかけを持ち越さない
                         splitter.reset()
