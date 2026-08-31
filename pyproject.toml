@@ -6,7 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "jarvis-secretary"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.116,<1", "uvicorn[standard]>=0.35,<1", "python-dotenv>=1.1,<2"]
+dependencies = [
+    "fastapi>=0.116,<1",
+    "uvicorn[standard]>=0.35,<1",
+    "python-dotenv>=1.1,<2",
+    # Phase 2（音声往復）
+    "faster-whisper>=1.2,<2",
+    "webrtcvad-wheels>=2.0,<3",
+    # webrtcvad は import 時に pkg_resources を使う。Python 3.12 以降の標準からは
+    # 外れており、setuptools 81 以降も削除予定。入っていないと import で落ちるので
+    # ここで明示的に留める。VAD を別実装へ替えるときに一緒に外すこと。
+    "setuptools<81",
+]
 
 [project.optional-dependencies]
 dev = ["httpx>=0.28,<1", "pytest>=8,<9"]
