@@ -16,9 +16,12 @@ from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from .agent import CodexAgent
 from .audio import SpeechSplitter
 from .config import Settings
+from .router import route
 from .transcribe import Transcriber
+from . import vault as vault_reader
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -293,6 +296,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     cpu_seen: dict[str, tuple[int, float]] = {}
     # 書き起こしはモデルを常駐させるのでアプリに1つだけ持つ（§8）
     transcriber = Transcriber()
+    # エージェントは同時1ジョブ（§10）。アプリで1つ持って直列化する
+    agent = CodexAgent(vault_path)
 
     async def watch_scheme() -> None:
         previous = read_scheme(scheme_path)
@@ -399,6 +404,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         await socket.send_json(live_event())
         # §12「binary フレーム = 16kHz mono Int16 PCM」「text フレーム = JSON」
         splitter = SpeechSplitter()
+        was_speaking = False
 
         async def finish(utterance) -> None:
             """確定した発話を書き起こして返す。失敗は黙って捨てず理由を送る。"""
@@ -423,6 +429,51 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                 "type": "audio.final", "text": result.text,
                 "ms": utterance.ms, "took": result.ms, "ts": timestamp_ms(),
             })
+            await respond(result.text)
+
+        async def respond(text: str) -> None:
+            """用件を判定して答える（§9）。決まった問いは即答、それ以外は Codex。"""
+            decision = route(text)
+            logger.info("[ROUTE] %s/%s matched=%r direct=%s",
+                        decision.intent, decision.mode, decision.matched, decision.direct)
+
+            # §9「SYSTEM を最優先で判定する（エージェントを起動しない）」
+            if decision.intent == "SYSTEM":
+                await socket.send_json({"type": "session.sleep", "reason": "system", "ts": timestamp_ms()})
+                return
+
+            # 決まった問いはファイルを読むだけで返す。Codex は実測 42.6 秒かかる
+            if decision.direct:
+                found = vault_reader.answer(vault_path, decision.direct)
+                if found is not None:
+                    await socket.send_json({
+                        "type": "agent.completed", "intent": decision.intent,
+                        "summary": found.summary, "spoken_reply": found.spoken_reply,
+                        "sources": found.sources, "took": 0, "ts": timestamp_ms(),
+                    })
+                    return
+
+            # ここから先は時間がかかる。待たせると分かるよう先に知らせる（§12）
+            await socket.send_json({
+                "type": "agent.started", "intent": decision.intent,
+                "matched": decision.matched, "ts": timestamp_ms(),
+            })
+            started = timestamp_ms()
+            outcome = await agent.run(text, decision.mode)
+            took = timestamp_ms() - started
+            if outcome.error:
+                logger.warning("[AGENT] %s (%dms)", outcome.error, took)
+                await socket.send_json({
+                    "type": "system.error", "code": outcome.error.split(":")[0],
+                    "message": outcome.error, "retryable": True, "ts": timestamp_ms(),
+                })
+                return
+            logger.info("[AGENT] %dms → %r", took, outcome.spoken_reply[:60])
+            await socket.send_json({
+                "type": "agent.completed", "intent": decision.intent,
+                "summary": outcome.summary, "spoken_reply": outcome.spoken_reply,
+                "sources": outcome.sources, "took": took, "ts": timestamp_ms(),
+            })
 
         try:
             while True:
@@ -435,6 +486,12 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                 if chunk:
                     for utterance in splitter.feed(chunk):
                         await finish(utterance)
+                    # 話し始めたことを伝える。iPhone 側はこれで待機へ戻る
+                    # タイマーを止める（話している最中に寝てしまっていた）
+                    if splitter.speaking != was_speaking:
+                        was_speaking = splitter.speaking
+                        if was_speaking:
+                            await socket.send_json({"type": "audio.speaking", "ts": timestamp_ms()})
                     continue
 
                 text = packet.get("text")

@@ -114,7 +114,7 @@ button { font: inherit; color: inherit }
 /* 待機: 全体を少し落とし、細い光がゆっくり回る。発光はごく薄く漂わせる */
 /* 待機は「暗くて光が走っていない」状態。起動から戻っても毎回ここへ戻す。
    走る光は起動と会話中だけのものにして、常設時は消しておく */
-.scrim-sleep { opacity: .42 }
+.scrim-sleep { opacity: .58 }
 .amb-sleep .amb-ring { opacity: 0 !important; animation: none !important; transition: opacity .3s ease }
 .amb-sleep .amb-blob { opacity: .05 !important; animation: none !important; filter: blur(90px) !important; transition: opacity .4s ease }
 .amb-sleep .amb-blob-b { animation-duration: 14s; animation-delay: -3s }

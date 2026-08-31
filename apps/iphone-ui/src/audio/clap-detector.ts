@@ -1,5 +1,7 @@
 import type { AudioMetrics, ClapLog, ClapSettings } from "./types";
 
+const ABSOLUTE_MIN_RMS = 0.0035;
+
 export class ClapDetector {
   private noiseFloor = 0.002;
   private firstClapAt = 0;
@@ -13,7 +15,11 @@ export class ClapDetector {
   ingest(metric: AudioMetrics): void {
     const alpha = 1 - Math.exp(-128 / 48000 / 3);
     if (metric.rms < this.noiseFloor * 3) this.noiseFloor += alpha * (metric.rms - this.noiseFloor);
-    const threshold = Math.max(0.008, this.noiseFloor * this.settings.ratio);
+    // 音量の下限。0.008 は実機だと高すぎた。指パッチンそのもの（hf 0.48〜0.52）が
+    // rms 0.0058〜0.0077 で弾かれていた（2026-08-31 のログ）。ノイズ床は 0.0007
+    // 前後なので、効いていたのはこの固定値だけ。
+    // 誤検出は高周波比(hfMin)と立ち上がり(20ms)で止める前提で下げる
+    const threshold = Math.max(ABSOLUTE_MIN_RMS, this.noiseFloor * this.settings.ratio);
     const loud = metric.rms > threshold;
     // しきい値に届かなかったものも、たまに記録する。ここで黙って捨てていると
     // 「指パッチンが効かない」ときに何も残らず、原因が分からない

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ReconnectingSocket, type SocketStatus } from "./api/socket";
 import { ClapDetector } from "./audio/clap-detector";
 import { ClapMicrophone } from "./audio/microphone";
+import { ScreenWakeLock } from "./audio/wake-lock";
 import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
 import { DebugPanel } from "./components/DebugPanel";
 import { Ambience } from "./components/Ambience";
@@ -15,8 +16,12 @@ import type { SecretaryEvent, SecretaryState } from "./states/types";
 // WAKE_ANIM_MS は §15 の指パッチン衝撃波と状態遷移を揃える。
 // LISTEN_IDLE_MS を過ぎると自分から待機へ戻る（言い忘れたまま起きっぱなしにしない）。
 const WAKE_ANIM_MS = 250;
-const LISTEN_IDLE_MS = 8000;
+// §6 の表は 8000。実機だと指を鳴らして言いかけるだけで寝てしまい短すぎたので
+// 延ばしてある。あわせて、話し始めたらこのタイマーは止める（下の speaking）
+const LISTEN_IDLE_MS = 20000;
 const POST_SPEAK_IDLE_MS = 8000;   // §6 読み上げ後に待機へ戻る
+const SNAP_TAIL_MS = 450;          // 指パッチンの余韻が消えるまで録音を待つ
+const HEARD_NOTHING_MS = 5000;     // 「聞き取れませんでした」を見せてから待機へ戻すまで
 
 // サーバーから来る差し色を検査する。信頼せずに形だけ見る。
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -98,8 +103,17 @@ export default function App() {
   const [live, setLive] = useState<LiveFacts>({ apps: {}, vault: { tracked: false, dirty: -1 }, phones: 0 });
   // 聞き取り結果の字幕。空文字は「まだ何も無い」を表す
   const [caption, setCaption] = useState("");
+  // サーバーが発話を検出した。話している間に待機へ戻さないための印
+  const [speaking, setSpeaking] = useState(false);
+  // 「聞き取れませんでした」を出した時刻。少し見せてから待機へ戻す
+  const [heardNothingAt, setHeardNothingAt] = useState(0);
+  // 読み上げる答え。聞き取った文ではなく、これを喋る
+  const [reply, setReply] = useState("");
   // マイクが止まったまま起こせない状態。ユーザー操作が要るので画面に出す
   const [micStalled, setMicStalled] = useState(false);
+  // 画面を消させない（常設端末なので寝ると指パッチンも聞けない）
+  const [awake, setAwake] = useState(false);
+  const wakeLock = useMemo(() => new ScreenWakeLock(), []);
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
   // 検出コールバックは再生成しない（依存配列が空）ので、最新の状態は ref 経由で見る
@@ -163,6 +177,26 @@ export default function App() {
             "--wallpaper", version ? `url("/wallpaper.webp?v=${version}")` : "none");
         }
 
+        // 答えを作り始めた。時間がかかるので画面で分かるようにする（§12）
+        if (event.type === "agent.started") {
+          setCaption(`調べています…（${String(event.intent ?? "")}）`);
+          send("AGENT_STARTED");
+        }
+
+        // 答えが出た。これを読み上げる（§10 spoken_reply）
+        if (event.type === "agent.completed") {
+          const spoken = typeof event.spoken_reply === "string" ? event.spoken_reply : "";
+          setCaption(typeof event.summary === "string" && event.summary ? event.summary : spoken);
+          setReply(spoken);
+          send("AGENT_COMPLETED");
+        }
+
+        // 待機へ戻す指示（「ありがとう」など §9 の SYSTEM）
+        if (event.type === "session.sleep") send("IDLE");
+
+        // 話し始めた。待機へ戻るタイマーを止める（§8 の VAD による検出）
+        if (event.type === "audio.speaking") setSpeaking(true);
+
         // 聞き取りが確定した（§12 audio.final）。字幕に出して読み上げへ進む
         if (event.type === "audio.final" && typeof event.text === "string") {
           setCaption(event.text);
@@ -173,8 +207,10 @@ export default function App() {
         if (event.type === "system.error") {
           const message = typeof event.message === "string" ? event.message : "";
           if (event.code === "STT_FAILED") {
+            // その場では寝ない。指パッチンの余韻で空振りすることがあり、
+            // 即座に寝ると話しかける前に落ちる。文言を見せてから少し待って戻す
             setCaption(message || "聞き取れませんでした");
-            send("IDLE");
+            setHeardNothingAt(Date.now());
           } else {
             setCaption(message);
             send("SYSTEM_ERROR");
@@ -228,11 +264,29 @@ export default function App() {
     return () => clearInterval(id);
   }, [wakeEvery]);
 
+  // 聞き取れなかったときは、文言を5秒見せてから待機へ戻す
+  useEffect(() => {
+    if (!heardNothingAt) return;
+    const id = setTimeout(() => { setHeardNothingAt(0); send("IDLE"); }, HEARD_NOTHING_MS);
+    return () => clearTimeout(id);
+  }, [heardNothingAt]);
+
   // 録音は LISTENING の間だけ。待機中に送り続けない
   useEffect(() => {
     if (mic !== "on") return;
-    microphone.setRecording(state === "LISTENING");
+    if (state !== "LISTENING") { microphone.setRecording(false); return; }
+    // 指パッチンの余韻が発話として書き起こされ、空振りして待機へ戻っていた
+    // （2026-08-31 のログ: utterance 360ms → ''）。鳴らした音が消えてから録る
+    const id = setTimeout(() => microphone.setRecording(true), SNAP_TAIL_MS);
+    return () => { clearTimeout(id); microphone.setRecording(false); };
   }, [microphone, mic, state]);
+
+  // 画面ロックの見張り。OS の都合で解放されるので、外れていたら取り直す
+  useEffect(() => {
+    if (mic !== "on" || !ScreenWakeLock.supported) return;
+    const id = setInterval(() => { void wakeLock.enable().then(setAwake); }, 10000);
+    return () => clearInterval(id);
+  }, [wakeLock, mic]);
 
   // マイクの見張り。iOS は読み上げで録音セッションを止めることがあり、
   // 一度スリープすると指パッチンを拾わなくなっていた（2026-08-31 実機）。
@@ -240,12 +294,21 @@ export default function App() {
   // 起こせなかったときは画面に出す（黙って効かないままにしない）
   useEffect(() => {
     if (mic !== "on") return;
+    let stalls = 0;
     const id = setInterval(async () => {
-      const before = microphone.health();
-      if (before.ok) { setMicStalled(false); return; }
+      // 読み上げ中にミュートされるのは iOS の正常な動き。ここで開き直すと
+      // 毎回マイクを壊しに行くことになる（2026-08-31、2秒ごとに競合していた）
+      if (speechSynthesis.speaking) { stalls = 0; return; }
+
+      if (microphone.health().ok) { stalls = 0; setMicStalled(false); return; }
+
+      // 読み上げ直後は戻るまでに間がある。続けて詰まったときだけ手当てする
+      stalls += 1;
+      if (stalls < 2) return;
       const revived = await microphone.ensureRunning();
       setMicStalled(!revived);
       socketRef.current?.send({ type: "mic.health", ...microphone.health(), revived });
+      if (revived) stalls = 0;
     }, 2000);
     return () => clearInterval(id);
   }, [microphone, mic]);
@@ -253,6 +316,9 @@ export default function App() {
   useEffect(() => {
     if (state === "WAKING") {
       setCaption("");
+      setReply("");
+      setSpeaking(false);
+      setHeardNothingAt(0);
       const hello = new SpeechSynthesisUtterance("はい、どうしました？");
       hello.lang = "ja-JP";
       // 読み上げが終わった直後に必ず起こし直す。iOS は再生で録音を止めることがある
@@ -262,13 +328,15 @@ export default function App() {
       return () => clearTimeout(id);
     }
     if (state === "LISTENING") {
+      // 話し始めていたら待機へ戻さない。言い終わるまで待つ
+      // （終端は VAD が決める。長すぎる発話は §6 の 30秒で必ず切れる）
+      if (speaking) return;
       const id = setTimeout(() => send("IDLE"), LISTEN_IDLE_MS);
       return () => clearTimeout(id);
     }
-    // Phase 2 はここまで。聞き取れた文をそのまま読み返して待機へ戻る。
-    // Phase 3 で Vault を読んだ回答に差し替える（いまは応答を作らない）
-    if (state === "TRANSCRIBING") {
-      const utterance = new SpeechSynthesisUtterance(caption);
+    // 答えが返ったら読み上げて待機へ戻る（§10 spoken_reply を喋る）
+    if (state === "SPEAKING") {
+      const utterance = new SpeechSynthesisUtterance(reply);
       utterance.lang = "ja-JP";
       utterance.onend = () => { void microphone.ensureRunning(); };
       speechSynthesis.speak(utterance);
@@ -279,12 +347,15 @@ export default function App() {
       const id = setTimeout(() => send("RETRY"), 5000);
       return () => clearTimeout(id);
     }
-  }, [state, caption]);
+  }, [state, reply, speaking]);
 
   async function enableMic() {
     try {
       await microphone.start();
       setMic("on");
+      // 画面ロックの解除はユーザー操作の文脈でしか取れないことがある。
+      // マイク許可と同じ操作のうちに取っておく
+      setAwake(await wakeLock.enable());
     } catch {
       setMic("denied");
       send("SYSTEM_ERROR");
@@ -309,7 +380,10 @@ export default function App() {
     <Live state={content.en} code={content.code} live={live} caption={caption} />
 
     <footer className="controls">
-      <div className="system-flags"><span>VAULT 5</span><span>LAN SECURE</span><span>NO CLOUD</span></div>
+      <div className="system-flags">
+        <span>VAULT 5</span><span>LAN SECURE</span><span>NO CLOUD</span>
+        {mic === "on" ? <span>{awake ? "SCREEN ON" : "SCREEN LOCKS"}</span> : null}
+      </div>
       <div className="actions">
           {mic !== "on"
             ? <button className="primary-action" onClick={enableMic}>ENABLE MIC</button>
