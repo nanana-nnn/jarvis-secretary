@@ -30,7 +30,7 @@ const BURST_MS = 1400;
  *   blob  … 全面の発光。対角に2枚置いて呼吸させる
  *   ring  … 縁を回る光。conic-gradient を transform で回す
  *   mask  … ring の内側を背景色で隠して、縁だけ残す
- *   scrim … 待機時の減光。テーマ色を薄く敷くので light/dark どちらでも濁らない
+ *   scrim … 待機時の減光。**中身より前面**に黒を重ねる（下のコメント参照）
  *
  * `@property` は iOS Safari 16.4 未満で効かないので使わない。
  * この要素の祖先に filter を掛けないこと（position: fixed が壊れる）。
@@ -62,11 +62,17 @@ export function Ambience({ state }: { state: SecretaryState }) {
 
   // 起動演出中は状態が先へ進んでも burst を続ける。key で animation を必ず巻き戻す
   const tone = bursting ? "waking" : state.toLowerCase();
-  return <div className={`amb amb-${tone}`} aria-hidden="true">
-    <div className="amb-blob amb-blob-a" key={`a-${bursting}`} />
-    <div className="amb-blob amb-blob-b" key={`b-${bursting}`} />
-    <div className="amb-ring" key={`r-${bursting}`} />
-    <div className="amb-mask" />
-    <div className="amb-scrim" />
-  </div>;
+  // 減光の面だけは .amb の外に出す。.amb は中身より背面(z-index:0)なので、
+  // 中に置くと背景しか暗くならない。明るいのはドットと文字のほうなので、
+  // それらより前面に重ねないと画面は暗くならない（2026-08-31、実測で差が
+  // 255段階の6しかなかった）。触れないよう pointer-events は殺す
+  return <>
+    <div className={`amb amb-${tone}`} aria-hidden="true">
+      <div className="amb-blob amb-blob-a" key={`a-${bursting}`} />
+      <div className="amb-blob amb-blob-b" key={`b-${bursting}`} />
+      <div className="amb-ring" key={`r-${bursting}`} />
+      <div className="amb-mask" />
+    </div>
+    <div className={`amb-scrim scrim-${tone}`} aria-hidden="true" />
+  </>;
 }
