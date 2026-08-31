@@ -5,8 +5,8 @@
 import math
 import struct
 
-from server.audio import (FRAME_BYTES, FRAME_MS, MAX_UTTERANCE_MS, SAMPLE_RATE,
-                          SILENCE_MS, SpeechSplitter)
+from server.audio import (FRAME_BYTES, FRAME_MS, MAX_UTTERANCE_MS, MIN_UTTERANCE_MS,
+                          SAMPLE_RATE, SILENCE_MS, SpeechSplitter)
 
 
 def tone(ms: int, hz: int = 220) -> bytes:
@@ -105,3 +105,32 @@ def test_flush_returns_speech_in_progress() -> None:
     left = splitter.flush()
     assert left is not None and left.reason == "disconnect"
     assert splitter.flush() is None, "二度目は何も残っていない"
+
+
+def test_short_noise_is_not_an_utterance() -> None:
+    """指パッチンのような一瞬の音を書き起こしへ渡さない。
+
+    実機で 90ms の断片が書き起こしにかかり、空文字が返っていた
+    （2026-08-31 のログ）。空振りのぶん待たされるので手前で捨てる。
+    """
+    splitter = SpeechSplitter()
+    splitter.feed(tone(80))                       # 指パッチン相当の一瞬
+    done: list = []
+    fed = 0
+    while fed < SILENCE_MS * 2:
+        done.extend(splitter.feed(silence(100)))
+        fed += 100
+    assert done == [], "一瞬の物音が発話として出ている"
+
+
+def test_short_reply_still_gets_through() -> None:
+    """「はい」程度の短い返事は消さない。下限を上げすぎない歯止め。"""
+    splitter = SpeechSplitter()
+    splitter.feed(tone(400))
+    done: list = []
+    fed = 0
+    while not done and fed < SILENCE_MS * 3:
+        done.extend(splitter.feed(silence(100)))
+        fed += 100
+    assert done, "短い返事まで捨てている"
+    assert done[0].ms >= MIN_UTTERANCE_MS

@@ -26,6 +26,10 @@ SILENCE_MS = 1_200                    # §6 VAD_SILENCE_MS
 MAX_UTTERANCE_MS = 30_000             # §6 UTTERANCE_MAX_MS
 # 発話開始と判定する前の音も拾う。頭が切れると「はい」などの短い返事が消える
 PREROLL_MS = 300
+# これより短いものは発話にしない。指パッチンの音そのものを VAD が声と拾い、
+# 0.09秒の断片を書き起こそうとして空振りしていた（2026-08-31、実機のログ）。
+# 「はい」は 300ms 前後あるので、それを消さない範囲に置く
+MIN_UTTERANCE_MS = 250
 
 
 @dataclass
@@ -76,7 +80,7 @@ class SpeechSplitter:
             return None
         utterance = self._build("disconnect")
         self.reset()
-        return utterance
+        return utterance if utterance.ms >= MIN_UTTERANCE_MS else None
 
     def reset(self) -> None:
         self._tail = b""
@@ -107,7 +111,8 @@ class SpeechSplitter:
         if self._silence_ms >= SILENCE_MS:
             utterance = self._build("silence")
             self.reset()
-            return [utterance]
+            # 短すぎるものは物音とみなして捨てる（書き起こしへ渡さない）
+            return [utterance] if utterance.ms >= MIN_UTTERANCE_MS else []
 
         if self._length_ms() >= MAX_UTTERANCE_MS:
             utterance = self._build("max-length")
