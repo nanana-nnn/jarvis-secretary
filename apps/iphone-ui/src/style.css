@@ -33,7 +33,51 @@ button { font: inherit; color: inherit }
   transition: background .35s ease, color .35s ease;
 }
 
-/* sysmon のパネルと同じ、角丸の薄いカード */
+/* ── 画面の縁が光る演出 ────────────────────────────────────────────
+   光り方は状態に紐づける（ただの飾りにしない）。色は scheme 追従なので
+   壁紙を変えると光の色も変わる。要素は回転するリングと、内側を塗る面の2枚 */
+/* 中身より背面に置く（edge-mask は背景色で塗りつぶすのでパネルを覆わせない）。
+   position:fixed なので、grid の .shell の中にあってもセルを取らない */
+.edge { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: 26px; opacity: 0; transition: opacity .45s ease }
+.edge-ring {
+  position: absolute; left: 50%; top: 50%; width: 200vmax; height: 200vmax; margin: -100vmax;
+  background: conic-gradient(from 0deg,
+    transparent 0deg, var(--scheme-primary) 40deg, transparent 110deg,
+    transparent 180deg, var(--scheme-primary) 220deg, transparent 290deg, transparent 360deg);
+  animation: edge-spin 6s linear infinite;
+}
+/* 内側を背景色で塗って、縁のリングだけ残す */
+.edge-mask { position: absolute; inset: 3px; border-radius: 24px; background: var(--scheme-bg) }
+@keyframes edge-spin { to { transform: rotate(360deg) } }
+@keyframes edge-breathe { 0%, 100% { opacity: .30 } 50% { opacity: .68 } }
+@keyframes edge-fast { 0%, 100% { opacity: .45 } 50% { opacity: 1 } }
+/* 起動の瞬間だけ。太く焚いて一気に回し、落ち着く */
+@keyframes edge-burst {
+  0%   { opacity: 1; filter: brightness(2.4) saturate(1.5) }
+  70%  { opacity: 1; filter: brightness(1.3) saturate(1.2) }
+  100% { opacity: .85; filter: none }
+}
+
+.edge-sleep { opacity: 1; animation: edge-breathe 5.5s ease-in-out infinite }
+.edge-sleep .edge-ring { animation-duration: 14s }
+.edge-waking { opacity: 1; animation: edge-burst 1.1s ease-out both }
+.edge-waking .edge-ring { animation-duration: 1.1s }
+.edge-waking .edge-mask { inset: 7px }               /* 起動時だけ縁を太くする */
+.edge-listening { opacity: .95 }
+.edge-listening .edge-ring { animation-duration: 3.5s }
+.edge-transcribing, .edge-thinking, .edge-speaking, .edge-approval { opacity: 1; animation: edge-fast 1.5s ease-in-out infinite }
+.edge-transcribing .edge-ring, .edge-thinking .edge-ring, .edge-speaking .edge-ring, .edge-approval .edge-ring { animation-duration: 2.2s }
+/* 異常時は形を変えず色だけ error へ寄せる（状態の系統が一目で分かるように）*/
+.edge-error .edge-ring, .edge-offline .edge-ring {
+  background: conic-gradient(from 0deg, transparent 0deg, var(--scheme-error) 40deg, transparent 110deg,
+    transparent 180deg, var(--scheme-error) 220deg, transparent 290deg, transparent 360deg);
+}
+.edge-error { opacity: .9; animation: edge-fast 1.1s ease-in-out infinite }
+.edge-offline { opacity: .5; animation: edge-breathe 4s ease-in-out infinite }
+.edge-booting { opacity: .4; animation: edge-breathe 3s ease-in-out infinite }
+
+/* sysmon のパネルと同じ、角丸の薄いカード。縁の光より前面に置く */
+.panel, .controls { position: relative; z-index: 1 }
 .panel { border-radius: 18px; background: color-mix(in srgb, var(--scheme-surface) 55%, var(--scheme-bg)); overflow: hidden }
 
 /* 1段目: fastfetch。ロゴも枠も37桁なので、37桁が画面幅に収まる字送りで頭打ちにする
@@ -56,12 +100,16 @@ button { font: inherit; color: inherit }
 .live small { color: var(--scheme-muted); font-size: clamp(8px, 2.7vw, 11px); letter-spacing: .18em }
 .state-error .live h1, .state-offline .live h1 { color: var(--scheme-error) }
 
-.live .dots { display: flex; gap: 14px; margin-top: 4px; font-size: clamp(15px, 5.2vw, 22px); line-height: 1 }
+/* SNS に上げた小さい画像でも読めるよう、大きめのアイコン＋名前で1組にする */
+.live .dots { display: flex; gap: clamp(8px, 3.2vw, 16px); margin-top: 6px }
+.dot { display: grid; justify-items: center; gap: 3px; color: var(--scheme-outline); opacity: .4; transition: color .3s ease, opacity .3s ease }
+.dot i { font-style: normal; font-size: clamp(17px, 6vw, 26px); line-height: 1 }
+.dot b { font-weight: 500; font-size: clamp(6px, 2.1vw, 9px); letter-spacing: .04em }
 /* off = 居ない / alive = 居る / busy = CPUが伸びている＝処理中 */
-.dot { color: var(--scheme-outline); opacity: .45; transition: color .3s ease, opacity .3s ease }
 .dot.alive { color: var(--scheme-muted); opacity: 1 }
-.dot.busy { color: var(--scheme-primary); opacity: 1; animation: busy-pulse 1.4s ease-in-out infinite }
-@keyframes busy-pulse { 50% { opacity: .38 } }
+.dot.busy { color: var(--scheme-primary); opacity: 1 }
+.dot.busy i { animation: busy-pulse 1.4s ease-in-out infinite }
+@keyframes busy-pulse { 50% { opacity: .35 } }
 
 .live-meta { display: flex; gap: 14px; margin-top: 2px; color: var(--scheme-outline); font-size: clamp(8px, 2.7vw, 11px); letter-spacing: .06em }
 .live-meta .on { color: var(--scheme-primary) }

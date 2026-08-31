@@ -4,6 +4,7 @@ import { ClapDetector } from "./audio/clap-detector";
 import { ClapMicrophone } from "./audio/microphone";
 import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
 import { DebugPanel } from "./components/DebugPanel";
+import { EdgeGlow } from "./components/EdgeGlow";
 import { Fetch, type Facts } from "./components/Fetch";
 import { LavaCore } from "./components/LavaCore";
 import { Live, type LiveFacts } from "./components/Live";
@@ -211,6 +212,7 @@ export default function App() {
 
   // sysmon の右列と同じ3段。上から fetch / dots / 状態（tty-clock の位置）
   return <main className={`shell state-${view.toLowerCase()}`}>
+    <EdgeGlow state={view} />
     <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} />
 
     <section className="core-stage panel">

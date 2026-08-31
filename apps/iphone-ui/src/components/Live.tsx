@@ -35,10 +35,13 @@ const GIT = "\ue702";
 
 // state は表示名（"STANDBY" など）。状態機械の値そのものではない
 export function Live({ state, code, live }: { state: string; code: string; live: LiveFacts }) {
+  // SNS に上げた小さい画像でも何のアイコンか分かるよう、下に名前を添える
   const dots = APPS.map(({ key, icon, label }) => {
     const app: AppState = live.apps[key] ?? { alive: false, busy: false };
     const status = app.busy ? "busy" : app.alive ? "alive" : "off";
-    return <span key={key} className={`dot ${status}`} title={`${label}: ${status}`}>{icon}</span>;
+    return <span key={key} className={`dot ${status}`} title={`${label}: ${status}`}>
+      <i>{icon}</i><b>{label}</b>
+    </span>;
   });
 
   // 台数と件数は数えられたときだけ出す。分からないものは「?」にして 0 と書かない

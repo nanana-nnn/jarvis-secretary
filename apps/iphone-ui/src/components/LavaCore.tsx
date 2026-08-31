@@ -73,6 +73,12 @@ function step(balls: Ball[]): void {
 
 export function LavaCore({ state }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // 色だけは状態で変えるが、そのために描画ループを作り直さない。
+  // 依存配列に state を入れると、状態が変わるたびに玉が作り直されて
+  // 指パッチンのたびに絵が飛ぶ（2026-08-31、実際そうなっていた）。
+  // lavat は何にも反応せず動き続けるものなので、ここは切り離す。
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -104,7 +110,8 @@ export function LavaCore({ state }: Props) {
 
       const style = getComputedStyle(document.documentElement);
       // -c と -k に同じ色を渡しているのでグラデーションにならず単色で塗られる
-      context.fillStyle = (state === "ERROR" || state === "OFFLINE"
+      const view = stateRef.current;
+      context.fillStyle = (view === "ERROR" || view === "OFFLINE"
         ? style.getPropertyValue("--scheme-error").trim()
         : style.getPropertyValue("--scheme-primary").trim()) || "#1b696f";
 
@@ -133,7 +140,7 @@ export function LavaCore({ state }: Props) {
 
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [state]);
+  }, []);   // ← 状態を入れないこと。入れるとシミュレーションが作り直される
 
   return <canvas ref={canvasRef} className="lava-core" aria-hidden="true" />;
 }
