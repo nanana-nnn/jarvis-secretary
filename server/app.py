@@ -12,7 +12,8 @@ import socket as system_socket
 import subprocess
 from time import monotonic_ns
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import Settings
@@ -20,6 +21,12 @@ from .config import Settings
 
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_SCHEME_PATH = Path.home() / ".local/state/caelestia/scheme.json"
+# caelestia が今出している壁紙。配色と同じタイミングで書き換わる
+DEFAULT_WALLPAPER_PATH = Path.home() / ".local/state/caelestia/wallpaper/path.txt"
+# 変換済みの置き場。元は数MBのこともあるので、そのままは配らない
+WALLPAPER_CACHE = Path.home() / ".cache/jarvis-secretary"
+WALLPAPER_MAX = 1400          # 長辺。iPhone で見るには十分で、転送量を抑えられる
+WALLPAPER_QUALITY = 72
 # 判断・記録の正本（AI_RULES.md の Vault）。VAULT_PATH で差し替えられる
 DEFAULT_VAULT_PATH = Path(os.getenv("VAULT_PATH") or Path.home() / "ドキュメント/Start Vault")
 HEX_COLOUR = re.compile(r"^[0-9a-fA-F]{6}$")
@@ -198,6 +205,57 @@ def read_vault(vault: Path) -> dict[str, object]:
     return {"tracked": True, "dirty": dirty}
 
 
+def wallpaper_source() -> Path | None:
+    """caelestia が今出している壁紙の実体パス。読めなければ None。"""
+    try:
+        raw = DEFAULT_WALLPAPER_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    source = Path(raw)
+    return source if source.is_file() else None
+
+
+def wallpaper_version(source: Path | None) -> str:
+    """壁紙が変わったことを一意に表す札。パスと更新時刻から作る。"""
+    if source is None:
+        return ""
+    try:
+        stamp = source.stat().st_mtime_ns
+    except OSError:
+        return ""
+    import hashlib
+    return hashlib.sha256(f"{source}:{stamp}".encode()).hexdigest()[:16]
+
+
+def wallpaper_webp(source: Path | None, version: str) -> Path | None:
+    """壁紙を iPhone 向けの WebP に落として返す。同じ版があれば作り直さない。
+
+    元は数MBになることがある。PNG のまま置いて初回表示が固まった事故があるので
+    （2026-08-29、2枚で 6.3MB）、必ず縮めてから配る。
+    """
+    if source is None or not version:
+        return None
+    WALLPAPER_CACHE.mkdir(parents=True, exist_ok=True)
+    out = WALLPAPER_CACHE / f"wallpaper-{version}.webp"
+    if out.is_file():
+        return out
+    try:
+        subprocess.run(
+            ["magick", str(source), "-auto-orient",
+             "-resize", f"{WALLPAPER_MAX}x{WALLPAPER_MAX}>",
+             "-quality", str(WALLPAPER_QUALITY), str(out)],
+            check=True, capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # 古い版を片付ける（壁紙を変えるたびに溜まるため）
+    for stale in WALLPAPER_CACHE.glob("wallpaper-*.webp"):
+        if stale != out:
+            with suppress(OSError):
+                stale.unlink()
+    return out if out.is_file() else None
+
+
 def read_telemetry() -> dict[str, object]:
     used_ratio, used_gib, total_gib, uptime_seconds = 0.0, 0.0, 0.0, 0.0
     try:
@@ -234,6 +292,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
 
     async def watch_scheme() -> None:
         previous = read_scheme(scheme_path)
+        previous_paper = wallpaper_version(wallpaper_source())
         while True:
             scheme = read_scheme(scheme_path)
             if scheme != previous:
@@ -242,7 +301,23 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                 for client in tuple(clients):
                     with suppress(RuntimeError, WebSocketDisconnect):
                         await client.send_json(event)
+
+            # 壁紙は配色と同じタイミングで変わる。版が変われば作り直して知らせる
+            paper = wallpaper_version(wallpaper_source())
+            if paper != previous_paper:
+                previous_paper = paper
+                event = wallpaper_event()
+                for client in tuple(clients):
+                    with suppress(RuntimeError, WebSocketDisconnect):
+                        await client.send_json(event)
             await asyncio.sleep(1)
+
+    def wallpaper_event() -> dict[str, object]:
+        source = wallpaper_source()
+        version = wallpaper_version(source)
+        # 変換に失敗したら version を空で返す。壁紙なしとして扱わせる
+        ready = wallpaper_webp(source, version) is not None
+        return {"type": "wallpaper.changed", "version": version if ready else "", "ts": timestamp_ms()}
 
     def live_event() -> dict[str, object]:
         """3段目に出す「今どうなっているか」。すべて実測。数えられないものは出さない。
@@ -295,6 +370,16 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     async def health() -> dict[str, object]:
         return {"ok": True, "phase": 1, "connection": {"https": True, "websocket": True}}
 
+    @app.get("/wallpaper.webp")
+    async def wallpaper() -> Response:
+        source = wallpaper_source()
+        out = wallpaper_webp(source, wallpaper_version(source))
+        if out is None:
+            return Response(status_code=404)
+        # 版ごとに別URLで取りに来るので、長く持たせてよい
+        return FileResponse(out, media_type="image/webp",
+                            headers={"Cache-Control": "public, max-age=604800, immutable"})
+
     @app.websocket("/ws")
     async def websocket_endpoint(socket: WebSocket) -> None:
         origin = socket.headers.get("origin")
@@ -305,6 +390,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         clients.add(socket)
         await socket.send_json({"type": "connection.ready", "ts": timestamp_ms()})
         await socket.send_json(scheme_event(scheme_path))
+        await socket.send_json(wallpaper_event())
         await socket.send_json(read_telemetry())
         await socket.send_json(live_event())
         try:

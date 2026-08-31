@@ -1,9 +1,11 @@
 from pathlib import Path
+import os
 import re
 
 from fastapi.testclient import TestClient
 
-from server.app import create_app, format_uptime, read_primary, read_processes, read_scheme, read_telemetry
+from server.app import (create_app, format_uptime, read_primary, read_processes, read_scheme,
+                        read_telemetry, wallpaper_version)
 from server.config import Settings
 
 
@@ -151,6 +153,33 @@ def test_busy_needs_a_previous_observation() -> None:
     # 2回目以降は差分が取れるので busy が立ちうる（真偽は実機の負荷しだい）
     second = read_processes(seen)
     assert set(second) == set(first)
+
+
+def test_wallpaper_version_changes_with_the_file(tmp_path: Path) -> None:
+    """壁紙の版はパスと更新時刻から作る。変われば別の札になり、取り直させられる。"""
+    assert wallpaper_version(None) == ""
+
+    paper = tmp_path / "a.jpg"
+    paper.write_bytes(b"one")
+    first = wallpaper_version(paper)
+    assert first and wallpaper_version(paper) == first, "同じ内容なら同じ版"
+
+    os.utime(paper, ns=(0, 1))
+    assert wallpaper_version(paper) != first, "更新されたら別の版になる"
+
+    other = tmp_path / "b.jpg"
+    other.write_bytes(b"one")
+    assert wallpaper_version(other) != wallpaper_version(paper), "別のパスなら別の版"
+
+
+def test_wallpaper_endpoint_answers_or_404() -> None:
+    """壁紙が読めないときは 404。壊れた画像や空を配らない。"""
+    with TestClient(create_app(SETTINGS, NO_SCHEME)) as client:
+        response = client.get("/wallpaper.webp")
+    assert response.status_code in (200, 404)
+    if response.status_code == 200:
+        assert response.headers["content-type"] == "image/webp"
+        assert len(response.content) > 0
 
 
 def test_websocket_accepts_wake_candidate_log() -> None:

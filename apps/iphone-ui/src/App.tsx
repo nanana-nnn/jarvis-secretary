@@ -147,6 +147,14 @@ export default function App() {
           }
         }
 
+        // 壁紙が変わった。版つきのURLで取り直す（同じ版ならブラウザの控えが効く）。
+        // 版が空＝変換に失敗しているので、壁紙なしへ戻す
+        if (event.type === "wallpaper.changed") {
+          const version = typeof event.version === "string" ? event.version : "";
+          document.documentElement.style.setProperty(
+            "--wallpaper", version ? `url("/wallpaper.webp?v=${version}")` : "none");
+        }
+
         // 3段目の実測（5秒間隔）。形が違うものは捨てて、前の値を残す
         if (event.type === "system.live" && event.apps && typeof event.apps === "object") {
           setLive(previous => ({
