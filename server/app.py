@@ -101,11 +101,23 @@ def static_facts() -> dict[str, str]:
 
 
 def read_packages() -> int:
-    """pacman のローカルDBを数える。`pacman -Q | wc -l` と一致する（差分は DB 版数ファイル1件）。"""
+    """fastfetch の packages {all} と同じ数。
+
+    pacman だけだと合わない。fastfetch は ~/Applications の AppImage も数えるので、
+    実機では pacman 1490 + appimage 2 = 1492 になる（`fastfetch --structure packages`
+    で確認）。pacman の数は `pacman -Q | wc -l` と一致する。
+    """
+    total = 0
     try:
-        return sum(1 for entry in Path("/var/lib/pacman/local").iterdir() if entry.is_dir())
+        total += sum(1 for entry in Path("/var/lib/pacman/local").iterdir() if entry.is_dir())
     except OSError:
-        return 0
+        pass
+    try:
+        total += sum(1 for entry in (Path.home() / "Applications").iterdir()
+                     if entry.is_file() and entry.suffix.lower() == ".appimage")
+    except OSError:
+        pass
+    return total
 
 
 def read_telemetry() -> dict[str, object]:

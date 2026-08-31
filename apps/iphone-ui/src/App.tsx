@@ -197,16 +197,17 @@ export default function App() {
   const connected = !["BOOTING", "OFFLINE", "ERROR"].includes(view);
   const showDebug = debug || params?.get("debug") === "1";
 
+  // sysmon の右列と同じ3段。上から fetch / dots / 状態（tty-clock の位置）
   return <main className={`shell state-${view.toLowerCase()}`}>
     <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} />
 
-    <section className="core-stage">
+    <section className="core-stage panel">
       <LavaCore state={view} />
     </section>
 
-    <section className="state-panel">
-      <small>{content.code}</small>
+    <section className="state-panel panel">
       <h1>{content.en}</h1>
+      <small>{content.code}</small>
     </section>
 
     <footer className="controls">

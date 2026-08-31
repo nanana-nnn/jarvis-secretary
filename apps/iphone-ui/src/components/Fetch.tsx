@@ -1,25 +1,16 @@
 /**
- * Caelestia のログイン画面に出ている fastfetch 表示の移植。
- * ロゴを `Caelestia` から `JARVIS` に差し替えただけで、並びと書式は実物に合わせてある。
+ * Caelestia のログイン画面に出ている fastfetch 表示の移植。ロゴだけ JARVIS に差し替える。
  *
- * ロゴは figlet の slant フォント（実物と同じ。pyfiglet で描かせて突き合わせ済み）。
+ * 書式は推測せず `~/.config/fastfetch/config.jsonc` から起こした。
+ * アイコンのコードポイントも同じ（設定の key に直接埋まっている）。
  *
- * 実物は各項目の頭に Nerd Font のアイコンが付くが、iPhone Safari には Nerd Font が無く
- * 豆腐になるので落とした（DESIGN.md §15.1「確認できない字形は使わない」）。
+ * ロゴは figlet の slant フォント。実物と同じであることは pyfiglet に
+ * `Caelestia` を描かせて突き合わせて確認済み。幅は枠と同じ37桁。
  *
- * 枠は `╭─│╯` で描かない。罫線文字は等幅フォントに無いと別フォントへ落ち、
- * ASCIIと送り幅が変わって桁がずれる（実測: ASCII 4.58px/字 に対し罫線 9.16px/字）。
- * 見た目は同じ角丸の矩形なので、CSS の border で描けばフォントに依存しない。
- * 同じ理由で値の右寄せも padStart ではなく grid に任せる。
+ * 枠は罫線文字で描く。字送りが揃っていないと桁が崩れるので、
+ * 送り 0.6em で揃った Nerd Font のサブセットを同梱して当てている
+ * （public/fonts/。当たらないと崩れるが、同一オリジンなので取りこぼさない）。
  */
-
-const LOGO = [
-  "       _____    ____ _    ___________",
-  "      / /   |  / __ \\ |  / /  _/ ___/",
-  " __  / / /| | / /_/ / | / // / \\__ \\",
-  "/ /_/ / ___ |/ _, _/| |/ // / ___/ /",
-  "\\____/_/  |_/_/ |_| |___/___//____/",
-].join("\n");
 
 export type Facts = {
   kernel: string;
@@ -32,15 +23,46 @@ export type Facts = {
   distro: string;
 };
 
-// 実物と同じ並び
-const ROWS: (keyof Facts)[] = ["kernel", "uptime", "shell", "mem", "pkgs", "user", "hname", "distro"];
+const LOGO = [
+  "       _____    ____ _    ___________",
+  "      / /   |  / __ \\ |  / /  _/ ___/",
+  " __  / / /| | / /_/ / | / // / \\__ \\",
+  "/ /_/ / ___ |/ _, _/| |/ // / ___/ /",
+  "\\____/_/  |_/_/ |_| |___/___//____/",
+].join("\n");
+
+/**
+ * 並び・ラベル・アイコンは config.jsonc の modules と同じ。
+ * 実物は端末での見え方に合わせてアイコンの後ろの空白を1〜2個で書き分けているが、
+ * ここは Mono 版（全字が同じ送り）を当てるので一律にして桁を揃える。
+ */
+const ROWS: { key: keyof Facts; icon: string }[] = [
+  { key: "kernel", icon: "\uf473" },
+  { key: "uptime", icon: "\ue385" },
+  { key: "shell", icon: "\uf489" },
+  { key: "mem", icon: "\uefc5" },
+  { key: "pkgs", icon: "\uf487" },
+  { key: "user", icon: "\uf007" },
+  { key: "hname", icon: "\uf108" },
+  { key: "distro", icon: "\u{f0ec0}" },
+];
+
+const WIDTH = 37;        // 枠の総桁数。ロゴ(slant)の幅と揃えてある
+const LABEL = 6;         // 最長ラベル "kernel" / "uptime" / "distro"
+const VALUE = 22;        // config.jsonc の `{...>22}` と同じ
+const LINE = "─".repeat(WIDTH - 2);
+
+// `│ ` + アイコン + `  ` + ラベル(6) + `  ` + 値(右詰め22) + ` │` = 37桁
+function row(icon: string, label: string, value: string): string {
+  const shown = value.length > VALUE ? value.slice(0, VALUE) : value;
+  return `│ ${icon}  ${label.padEnd(LABEL)}  ${shown.padStart(VALUE)} │`;
+}
 
 export function Fetch({ facts, link }: { facts: Facts; link: string }) {
-  return <section className="fetch" aria-label="JARVIS system information">
+  const body = ROWS.map(({ key, icon }) => row(icon, key, String(facts[key]))).join("\n");
+  return <section className="fetch panel" aria-label="JARVIS system information">
     <pre className="fetch-logo">{LOGO}</pre>
-    <dl className="fetch-box">
-      {ROWS.map(key => <div key={key}><dt>{key}</dt><dd>{String(facts[key])}</dd></div>)}
-      <div><dt>link</dt><dd>{link}</dd></div>
-    </dl>
+    <pre className="fetch-box">{`╭${LINE}╮\n${body}\n╰${LINE}╯`}</pre>
+    <span className="sr-only">link {link}</span>
   </section>;
 }

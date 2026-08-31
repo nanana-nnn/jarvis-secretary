@@ -1,66 +1,74 @@
+/* 同梱のサブセット。全グリフの送りが 0.6em で揃っているので、
+   枠線・アイコン・本文が同じ桁に乗る（public/fonts/README.md 参照）*/
+@font-face {
+  font-family: "JBMono Nerd"; font-style: normal; font-weight: 400; font-display: block;
+  src: url("/fonts/jbmono-nerd-regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JBMono Nerd"; font-style: normal; font-weight: 700; font-display: block;
+  src: url("/fonts/jbmono-nerd-bold.woff2") format("woff2");
+}
+
 :root {
   --scheme-bg: #f6fafa; --scheme-surface: #e7eff0; --scheme-surface-high: #e1eaeb;
   --scheme-text: #2a3435; --scheme-muted: #566162; --scheme-outline: #a9b4b5;
   --scheme-primary: #1b696f; --scheme-on-primary: #e8fdff; --scheme-error: #a83836;
-  --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-  color: var(--scheme-text); background: var(--scheme-bg); font-family: var(--sans);
+  --mono: "JBMono Nerd", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  color: var(--scheme-text); background: var(--scheme-bg); font-family: var(--mono);
   font-synthesis: none; -webkit-text-size-adjust: 100%;
 }
 * { box-sizing: border-box }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--scheme-bg) }
-button, input { font: inherit; color: inherit }
+button { font: inherit; color: inherit }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+
+/* sysmon の右列と同じ3段。上から fetch / dots / 状態（時計の代わり）*/
+/* 各段は中身の高さで決まり、余りは段の間へ配す（sysmon の3枚と同じ間合いにする）。
+   1fr にすると2段目だけ間延びして、ドットの上下に大きな空きができる */
 .shell {
-  position: fixed; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto;
-  gap: 8px; padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-  isolation: isolate; overflow: hidden;
-  background: radial-gradient(circle at 50% 37%, color-mix(in srgb, var(--scheme-primary) 11%, transparent), transparent 37%), var(--scheme-bg);
+  position: fixed; inset: 0; display: grid; grid-template-rows: repeat(3, auto) auto;
+  align-content: space-between; gap: 10px;
+  padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: var(--scheme-bg); overflow: hidden;
   transition: background .35s ease, color .35s ease;
 }
-.shell:before { content: ""; position: absolute; inset: 8px; z-index: -1; pointer-events: none; border: 1px solid color-mix(in srgb, var(--scheme-outline) 70%, transparent); border-radius: 24px; box-shadow: inset 0 0 25px color-mix(in srgb, var(--scheme-primary) 7%, transparent) }
-.shell:after { content: ""; position: absolute; left: 30px; right: 30px; bottom: 9px; height: 2px; background: repeating-linear-gradient(90deg, var(--scheme-primary) 0 14px, transparent 14px 25px); opacity: .75 }
-/* fastfetch表示。ロゴは37桁のASCIIアートなので、字送りが最も広いフォント(0.6em)でも
-   画面幅に収まるサイズで頭打ちにする（37 * 0.6 * 16px = 355px < 358px）*/
-.fetch { display: grid; justify-items: center; gap: 7px; padding: 2px 0 2px }
-.fetch-logo { margin: 0; color: var(--scheme-primary); font: 700 clamp(9px, 4.1vw, 16px)/1.16 var(--mono); white-space: pre }
-/* 枠は罫線文字でなく border で描く（フォント差で桁がずれないように）*/
-.fetch-box { width: 100%; margin: 0; padding: 7px 11px; border: 1px solid color-mix(in srgb, var(--scheme-outline) 75%, transparent); border-radius: 12px; font: 500 clamp(9px, 2.9vw, 12px)/1.65 var(--mono) }
-.fetch-box div { display: grid; grid-template-columns: auto 1fr; gap: 10px }
-.fetch-box dt { color: var(--scheme-muted) }
-.fetch-box dd { margin: 0; text-align: right; color: var(--scheme-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.core-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden }
-/* 実物の dots パネル(620x340px)と同じ比率。グリッドは 69x34 でセルが 9:10 になる */
+
+/* sysmon のパネルと同じ、角丸の薄いカード */
+.panel { border-radius: 18px; background: color-mix(in srgb, var(--scheme-surface) 55%, var(--scheme-bg)); overflow: hidden }
+
+/* 1段目: fastfetch。ロゴも枠も37桁なので、37桁が画面幅に収まる字送りで頭打ちにする
+   （37 * 0.6em * 15px = 333px < 366px）*/
+.fetch { display: grid; justify-items: center; gap: 5px; padding: 12px 6px; font-size: clamp(8px, 3.8vw, 15px); line-height: 1.22; white-space: pre }
+/* pre は UA 既定の font-family: monospace が継承より強いので、明示的に当て直す。
+   忘れると枠線だけ別フォントに落ちて送りが2倍になり、桁が崩れる */
+.fetch-logo, .fetch-box { margin: 0; font-family: var(--mono); font-size: inherit; line-height: inherit }
+.fetch-logo { color: var(--scheme-primary); font-weight: 700 }
+.fetch-box { color: var(--scheme-muted) }
+
+/* 2段目: lavat のドット。実物のパネル(620x340px)と同じ比率 */
+.core-stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 10px }
 .lava-core { width: 100%; aspect-ratio: 621 / 340; max-height: 100%; display: block }
-.state-panel { text-align: center; padding: 5px 12px 12px }
-.state-panel small { color: var(--scheme-primary); font: 800 8px/1 var(--mono); letter-spacing: .17em }
-.state-panel h1 { margin: 8px 0 5px; font: 800 clamp(20px, 6vw, 28px)/1 var(--mono); letter-spacing: -.02em }
-.state-panel:after { content: ""; display: block; width: 116px; height: 3px; margin: 13px auto 0; background: linear-gradient(90deg, var(--scheme-primary) 0 28%, color-mix(in srgb, var(--scheme-primary) 17%, transparent) 28%) }
-.controls { display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 8px 6px 5px; border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 62%, transparent) }
-.system-flags { display: flex; gap: 12px; color: var(--scheme-muted); font: 700 6px/1 var(--mono); letter-spacing: .08em }
-.system-flags span:before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 5px 1px 0; border-radius: 50%; background: var(--scheme-primary) }
+
+/* 3段目: tty-clock の位置。時計の代わりに状態を出す（大きく1行＋下に小さく1行）*/
+.state-panel { display: grid; justify-items: center; align-content: center; gap: 7px; padding: 18px 12px }
+.state-panel h1 { margin: 0; font-size: clamp(26px, 9.5vw, 44px); font-weight: 700; line-height: 1; letter-spacing: .02em; color: var(--scheme-primary) }
+.state-panel small { color: var(--scheme-muted); font-size: clamp(9px, 3vw, 12px); letter-spacing: .18em }
+.state-error h1, .state-offline h1 { color: var(--scheme-error) }
+
+.controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 2px; font-size: 9px; color: var(--scheme-muted) }
+.system-flags { display: flex; gap: 12px; letter-spacing: .08em }
+.system-flags span:before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 5px 2px 0; border-radius: 50%; background: var(--scheme-primary) }
 .actions { display: flex; align-items: center; gap: 6px }
-button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 8px 10px; background: var(--scheme-surface); font: 800 7px/1 var(--mono); letter-spacing: .06em }
-.primary-action { color: var(--scheme-on-primary); border-color: var(--scheme-primary); background: var(--scheme-primary); box-shadow: 0 0 15px color-mix(in srgb, var(--scheme-primary) 26%, transparent) }
-.debug-action { width: 29px; padding-inline: 0; color: var(--scheme-muted) }
-.mic-live { color: var(--scheme-primary); font: 800 7px/1 var(--mono); letter-spacing: .08em }
-.warning { color: var(--scheme-error); font: 800 7px/1 var(--mono) }
-.state-waking .core-stage { animation: wake-flash .7s ease-out }
-.state-listening .shell:before, .state-listening:before { box-shadow: inset 0 0 35px color-mix(in srgb, var(--scheme-primary) 14%, transparent) }
-.state-error .state-panel small, .state-offline .state-panel small { color: var(--scheme-error) }
-.state-sleep { animation: drift 240s linear infinite alternate }
-.debug { position: absolute; z-index: 20; inset: 14px; overflow: auto; padding: 16px; border: 1px solid var(--scheme-outline); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 96%, transparent); box-shadow: 0 18px 55px color-mix(in srgb, var(--scheme-text) 18%, transparent); backdrop-filter: blur(24px); font: 10px/1.5 var(--mono) }
+button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 7px 10px; background: var(--scheme-surface); font-size: 9px; letter-spacing: .06em }
+.primary-action { color: var(--scheme-on-primary); border-color: var(--scheme-primary); background: var(--scheme-primary) }
+.debug-action { width: 30px; padding-inline: 0 }
+.mic-live { color: var(--scheme-primary); letter-spacing: .08em }
+.warning { color: var(--scheme-error) }
+
+.debug { position: absolute; z-index: 20; inset: 14px; overflow: auto; padding: 16px; border: 1px solid var(--scheme-outline); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 96%, transparent); font-size: 10px; line-height: 1.5 }
 .settings { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--scheme-outline) }
 .settings label { color: var(--scheme-muted); font-size: 8px }
-.settings input { display: block; width: 58px; margin-top: 3px; border: 1px solid var(--scheme-outline); border-radius: 6px; background: var(--scheme-surface); padding: 4px }
-.debug ol { padding-left: 18px }.debug li { color: var(--scheme-muted) }.debug li.accepted { color: var(--scheme-primary) }
-@keyframes wake-flash { 0% { filter: brightness(2.2) } 100% { filter: brightness(1) } }
-@keyframes drift { to { transform: translate(4px, 5px) } }
+.settings input { display: block; width: 58px; margin-top: 3px; border: 1px solid var(--scheme-outline); border-radius: 6px; background: var(--scheme-surface); padding: 4px; font: inherit; color: inherit }
+.debug ol { padding-left: 18px } .debug li { color: var(--scheme-muted) } .debug li.accepted { color: var(--scheme-primary) }
+
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important } }
-@media (orientation: landscape) {
-  .shell { grid-template-columns: minmax(0, 1fr) minmax(260px, .72fr); grid-template-rows: auto 1fr auto; column-gap: 20px }
-  .topbar, .controls { grid-column: 1 / -1 }
-  .core-stage { grid-column: 1; grid-row: 2 }
-  .state-panel { grid-column: 2; grid-row: 2; align-self: center; text-align: left }
-  .state-panel:after { margin-left: 0 }
-  .lava-core { width: 100%; aspect-ratio: 621 / 340 }
-}
