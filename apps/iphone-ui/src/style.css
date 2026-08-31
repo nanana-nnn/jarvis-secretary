@@ -35,7 +35,7 @@ button { font: inherit; color: inherit }
 .shell {
   position: relative; width: 100%; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 10px;
-  padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, calc(env(safe-area-inset-bottom) * 0.35)) max(12px, env(safe-area-inset-left));
   background: var(--scheme-bg); overflow: hidden;
   transition: background .35s ease, color .35s ease;
 }
@@ -150,9 +150,11 @@ button { font: inherit; color: inherit }
 .fetch-logo { color: var(--scheme-primary); font-weight: 700 }
 .fetch-box { color: var(--scheme-muted) }
 
-/* 2段目: lavat のドット。実物のパネル(620x340px)と同じ比率 */
-.core-stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 10px; overflow: hidden }
-.lava-core { width: 100%; aspect-ratio: 621 / 340; max-height: 100%; display: block }
+/* 2段目: lavat のドット。面いっぱいに描く。
+   縦横比を固定すると letterbox の隙間が出る（上に10px、下は23px切れていた）。
+   本物も端末の実寸でグリッドを組むので、こちらも面の実寸から行数を出す */
+.core-stage { position: relative; min-height: 0; padding: 8px; overflow: hidden }
+.lava-core { display: block; width: 100%; height: 100% }
 
 /* 3段目: tty-clock の位置。時計の代わりに状態と「今生きているもの」を出す。
    点灯はすべてサーバーの実測。飾りで光らせない */
