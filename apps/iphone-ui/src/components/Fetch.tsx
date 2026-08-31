@@ -43,7 +43,6 @@ const ROWS: { key: keyof Facts; icon: string }[] = [
   { key: "mem", icon: "\uefc5" },
   { key: "pkgs", icon: "\uf487" },
   { key: "user", icon: "\uf007" },
-  { key: "hname", icon: "\uf108" },
   { key: "distro", icon: "\u{f0ec0}" },
 ];
 
