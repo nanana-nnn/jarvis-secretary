@@ -41,14 +41,24 @@ export function Ambience({ state }: { state: SecretaryState }) {
   // （?state=WAKING の見た目確認でも演出が出るように）
   const previous = useRef<SecretaryState | null>(null);
 
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     const entered = previous.current !== "WAKING" && state === "WAKING";
     previous.current = state;
     if (!entered) return;
     setBursting(true);
-    const id = setTimeout(() => setBursting(false), BURST_MS);
-    return () => clearTimeout(id);
+    // タイマーは effect のクリーンアップで消さない。
+    // WAKING の滞在は 250ms しかないので、次の状態へ移った時点で
+    // クリーンアップが走り、消灯用の setBursting(false) が永久に来なくなる。
+    // その結果 amb-waking が固定され、待機へ戻っても光ったまま・暗さも戻らない
+    // （2026-08-31、実機でその状態になっていた）。
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setBursting(false), BURST_MS);
   }, [state]);
+
+  // 片付けるのは本当に消えるときだけ
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
   // 起動演出中は状態が先へ進んでも burst を続ける。key で animation を必ず巻き戻す
   const tone = bursting ? "waking" : state.toLowerCase();

@@ -178,6 +178,22 @@ export default function App() {
     return () => { socketRef.current = null; socket.stop(); };
   }, []);
 
+  // ?state= / ?debug= / ?wake= の口。dev サーバー、または VITE_PREVIEW=1 で
+  // 建てたビルドでだけ開く（実機確認は静的ビルドで行うのでビルドにも要る）。
+  const previewable = import.meta.env.DEV || import.meta.env.VITE_PREVIEW === "1";
+  const params = previewable ? new URLSearchParams(location.search) : null;
+
+  // ?wake=15 で15秒ごとに指パッチン相当を撃つ（プレビュービルドのみ）。
+  // 起動→リッスン→待機の一巡を、声も物音も無しに確かめるための口。
+  const wakeEvery = Number(params?.get("wake") ?? 0);
+  useEffect(() => {
+    if (!wakeEvery) return;
+    const id = setInterval(() => {
+      if (stateRef.current === "SLEEP") send("CLAP_DETECTED");
+    }, wakeEvery * 1000);
+    return () => clearInterval(id);
+  }, [wakeEvery]);
+
   useEffect(() => {
     if (state === "WAKING") {
       speechSynthesis.speak(new SpeechSynthesisUtterance("はい、どうしました？"));
@@ -204,11 +220,6 @@ export default function App() {
     }
   }
 
-  // ?state=LISTENING で任意の状態を描画する（配線は変えず見た目だけ差し替える）。
-  // dev サーバー、または VITE_PREVIEW=1 で建てたビルドでだけ開く。
-  // 実機確認は静的ビルドで行うのでビルドにも口が要る（README「実機確認」）。
-  const previewable = import.meta.env.DEV || import.meta.env.VITE_PREVIEW === "1";
-  const params = previewable ? new URLSearchParams(location.search) : null;
   const preview = params?.get("state")?.toUpperCase() as SecretaryState | undefined;
   const view = preview && preview in copy ? preview : state;
   const content = copy[view];
