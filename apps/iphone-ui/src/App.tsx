@@ -139,6 +139,10 @@ export default function App() {
             for (const [key, variable] of Object.entries(schemeVariables)) {
               document.documentElement.style.setProperty(variable, String(scheme[key as keyof Scheme]));
             }
+            // Safari はツールバーと status bar をこの色で塗る。固定値のままだと
+            // 配色と合わず、画面の下に黒い帯が残る（2026-08-31、実機で約1cm）
+            document.querySelector('meta[name="theme-color"]')
+              ?.setAttribute("content", String(scheme.background));
           }
         }
 

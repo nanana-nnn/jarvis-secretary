@@ -3,7 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0d0b0a" />
+    <!-- Safari はツールバーと status bar をこの色で塗る。scheme.changed が届いたら
+         App.tsx が実際の背景色へ差し替える。ここは CSS の :root と同じ既定値 -->
+    <meta name="theme-color" content="#f6fafa" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -11,7 +13,7 @@
     <title>JARVIS Secretary</title>
   </head>
   <body>
-    <div id="boot-status" style="box-sizing:border-box;min-height:100vh;padding:2rem;background:#0d0b0a;color:#efe7da;font:16px system-ui">LOADING JARVIS…</div>
+    <div id="boot-status" style="box-sizing:border-box;min-height:100vh;padding:2rem;background:#f6fafa;color:#2a3435;font:16px system-ui">LOADING JARVIS…</div>
     <div id="root"></div>
     <script>
       function showBootError(message) {
