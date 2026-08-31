@@ -33,48 +33,90 @@ button { font: inherit; color: inherit }
   transition: background .35s ease, color .35s ease;
 }
 
-/* ── 画面の縁が光る演出 ────────────────────────────────────────────
+/* ── 画面全体の空気（減光・全面発光・縁を回る光）─────────────────
    光り方は状態に紐づける（ただの飾りにしない）。色は scheme 追従なので
-   壁紙を変えると光の色も変わる。要素は回転するリングと、内側を塗る面の2枚 */
-/* 中身より背面に置く（edge-mask は背景色で塗りつぶすのでパネルを覆わせない）。
-   position:fixed なので、grid の .shell の中にあってもセルを取らない */
-.edge { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: 26px; opacity: 0; transition: opacity .45s ease }
-.edge-ring {
+   壁紙を変えると光の色も変わる。
+   全面発光は ~/dev/hyper のニュース動画と同じ作り（大きな面を強くぼかして
+   低い不透明度で置き、ゆっくり拡縮させる）。色の遷移も向こうと同じ .8s。
+   中身より背面に置く（amb-mask が背景色で塗るのでパネルを覆わせない）。
+   position:fixed なので grid の .shell の中にあってもセルを取らない */
+.amb { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: 26px }
+
+/* 全面発光。対角に2枚 */
+.amb-blob {
+  position: absolute; width: 78vmax; height: 78vmax; border-radius: 50%;
+  background: var(--scheme-primary); filter: blur(90px);
+  opacity: 0; transition: opacity .8s ease-in-out;
+}
+.amb-blob-a { top: -30vmax; left: -26vmax }
+.amb-blob-b { bottom: -32vmax; right: -28vmax }
+
+/* 縁を回る光。内側は amb-mask で隠して枠だけ残す */
+.amb-ring {
   position: absolute; left: 50%; top: 50%; width: 200vmax; height: 200vmax; margin: -100vmax;
   background: conic-gradient(from 0deg,
     transparent 0deg, var(--scheme-primary) 40deg, transparent 110deg,
     transparent 180deg, var(--scheme-primary) 220deg, transparent 290deg, transparent 360deg);
-  animation: edge-spin 6s linear infinite;
+  animation: amb-spin 6s linear infinite;
+  opacity: 0; transition: opacity .45s ease;
 }
-/* 内側を背景色で塗って、縁のリングだけ残す */
-.edge-mask { position: absolute; inset: 3px; border-radius: 24px; background: var(--scheme-bg) }
-@keyframes edge-spin { to { transform: rotate(360deg) } }
-@keyframes edge-breathe { 0%, 100% { opacity: .30 } 50% { opacity: .68 } }
-@keyframes edge-fast { 0%, 100% { opacity: .45 } 50% { opacity: 1 } }
-/* 起動の瞬間だけ。太く焚いて一気に回し、落ち着く */
-@keyframes edge-burst {
-  0%   { opacity: 1; filter: brightness(2.4) saturate(1.5) }
-  70%  { opacity: 1; filter: brightness(1.3) saturate(1.2) }
-  100% { opacity: .85; filter: none }
+.amb-mask { position: absolute; inset: 3px; border-radius: 24px; background: var(--scheme-bg); transition: inset .5s ease }
+
+/* 待機時の減光。テーマ色を薄く敷くので light/dark どちらでも濁らない。
+   DESIGN.md §15「待機時は輝度を落とす」も兼ねる */
+.amb-scrim { position: absolute; inset: 0; background: var(--scheme-text); opacity: 0; transition: opacity 1.2s ease }
+
+@keyframes amb-spin { to { transform: rotate(360deg) } }
+@keyframes amb-ring-breathe { 0%, 100% { opacity: .28 } 50% { opacity: .62 } }
+@keyframes amb-ring-fast { 0%, 100% { opacity: .45 } 50% { opacity: 1 } }
+@keyframes amb-blob-breathe { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.12) } }
+/* 起動の瞬間。縁を焚いて一周させ、同時に全面を光らせる */
+@keyframes amb-ring-burst {
+  0%   { opacity: 1; filter: brightness(2.6) saturate(1.6) }
+  70%  { opacity: 1; filter: brightness(1.4) saturate(1.2) }
+  100% { opacity: .9; filter: none }
+}
+@keyframes amb-blob-burst {
+  0%   { opacity: .62; transform: scale(1.3) }
+  55%  { opacity: .46; transform: scale(1.12) }
+  100% { opacity: .30; transform: scale(1) }
 }
 
-.edge-sleep { opacity: 1; animation: edge-breathe 5.5s ease-in-out infinite }
-.edge-sleep .edge-ring { animation-duration: 14s }
-.edge-waking { opacity: 1; animation: edge-burst 1.1s ease-out both }
-.edge-waking .edge-ring { animation-duration: 1.1s }
-.edge-waking .edge-mask { inset: 7px }               /* 起動時だけ縁を太くする */
-.edge-listening { opacity: .95 }
-.edge-listening .edge-ring { animation-duration: 3.5s }
-.edge-transcribing, .edge-thinking, .edge-speaking, .edge-approval { opacity: 1; animation: edge-fast 1.5s ease-in-out infinite }
-.edge-transcribing .edge-ring, .edge-thinking .edge-ring, .edge-speaking .edge-ring, .edge-approval .edge-ring { animation-duration: 2.2s }
+/* 待機: 全体を少し落とし、細い光がゆっくり回る。発光はごく薄く漂わせる */
+.amb-sleep .amb-scrim { opacity: .12 }
+.amb-sleep .amb-ring { animation: amb-spin 16s linear infinite, amb-ring-breathe 5.5s ease-in-out infinite }
+.amb-sleep .amb-blob { opacity: .10; animation: amb-blob-breathe 11s ease-in-out infinite }
+.amb-sleep .amb-blob-b { animation-duration: 14s; animation-delay: -3s }
+
+/* 起動: 減光を外し、縁と全面を一気に焚く */
+.amb-waking .amb-scrim { opacity: 0; transition-duration: .25s }
+.amb-waking .amb-ring { animation: amb-spin 1.1s linear, amb-ring-burst 1.1s ease-out both }
+.amb-waking .amb-mask { inset: 8px }
+.amb-waking .amb-blob { animation: amb-blob-burst 1.4s ease-out both }
+.amb-waking .amb-blob-b { animation-delay: .1s }
+
+.amb-listening .amb-ring { opacity: .95; animation: amb-spin 3.5s linear infinite }
+.amb-listening .amb-blob { opacity: .26; animation: amb-blob-breathe 6s ease-in-out infinite }
+
+.amb-transcribing .amb-ring, .amb-thinking .amb-ring, .amb-speaking .amb-ring, .amb-approval .amb-ring {
+  animation: amb-spin 2.2s linear infinite, amb-ring-fast 1.5s ease-in-out infinite;
+}
+.amb-transcribing .amb-blob, .amb-thinking .amb-blob, .amb-speaking .amb-blob, .amb-approval .amb-blob {
+  opacity: .24; animation: amb-blob-breathe 3.4s ease-in-out infinite;
+}
+
 /* 異常時は形を変えず色だけ error へ寄せる（状態の系統が一目で分かるように）*/
-.edge-error .edge-ring, .edge-offline .edge-ring {
+.amb-error .amb-ring, .amb-offline .amb-ring {
   background: conic-gradient(from 0deg, transparent 0deg, var(--scheme-error) 40deg, transparent 110deg,
     transparent 180deg, var(--scheme-error) 220deg, transparent 290deg, transparent 360deg);
 }
-.edge-error { opacity: .9; animation: edge-fast 1.1s ease-in-out infinite }
-.edge-offline { opacity: .5; animation: edge-breathe 4s ease-in-out infinite }
-.edge-booting { opacity: .4; animation: edge-breathe 3s ease-in-out infinite }
+.amb-error .amb-blob, .amb-offline .amb-blob { background: var(--scheme-error) }
+.amb-error .amb-ring { animation: amb-spin 6s linear infinite, amb-ring-fast 1.1s ease-in-out infinite }
+.amb-error .amb-blob { opacity: .20 }
+.amb-offline .amb-scrim { opacity: .10 }
+.amb-offline .amb-ring { animation: amb-spin 10s linear infinite, amb-ring-breathe 4s ease-in-out infinite }
+.amb-offline .amb-blob { opacity: .10 }
+.amb-booting .amb-ring { animation: amb-spin 8s linear infinite, amb-ring-breathe 3s ease-in-out infinite }
 
 /* sysmon のパネルと同じ、角丸の薄いカード。縁の光より前面に置く */
 .panel, .controls { position: relative; z-index: 1 }
