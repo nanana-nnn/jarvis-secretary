@@ -49,11 +49,22 @@ button { font: inherit; color: inherit }
 .core-stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 10px }
 .lava-core { width: 100%; aspect-ratio: 621 / 340; max-height: 100%; display: block }
 
-/* 3段目: tty-clock の位置。時計の代わりに状態を出す（大きく1行＋下に小さく1行）*/
-.state-panel { display: grid; justify-items: center; align-content: center; gap: 7px; padding: 18px 12px }
-.state-panel h1 { margin: 0; font-size: clamp(26px, 9.5vw, 44px); font-weight: 700; line-height: 1; letter-spacing: .02em; color: var(--scheme-primary) }
-.state-panel small { color: var(--scheme-muted); font-size: clamp(9px, 3vw, 12px); letter-spacing: .18em }
-.state-error h1, .state-offline h1 { color: var(--scheme-error) }
+/* 3段目: tty-clock の位置。時計の代わりに状態と「今生きているもの」を出す。
+   点灯はすべてサーバーの実測。飾りで光らせない */
+.live { display: grid; justify-items: center; align-content: center; gap: 6px; padding: 14px 12px 12px }
+.live h1 { margin: 0; font-size: clamp(24px, 8.6vw, 40px); font-weight: 700; line-height: 1; letter-spacing: .02em; color: var(--scheme-primary) }
+.live small { color: var(--scheme-muted); font-size: clamp(8px, 2.7vw, 11px); letter-spacing: .18em }
+.state-error .live h1, .state-offline .live h1 { color: var(--scheme-error) }
+
+.live .dots { display: flex; gap: 14px; margin-top: 4px; font-size: clamp(15px, 5.2vw, 22px); line-height: 1 }
+/* off = 居ない / alive = 居る / busy = CPUが伸びている＝処理中 */
+.dot { color: var(--scheme-outline); opacity: .45; transition: color .3s ease, opacity .3s ease }
+.dot.alive { color: var(--scheme-muted); opacity: 1 }
+.dot.busy { color: var(--scheme-primary); opacity: 1; animation: busy-pulse 1.4s ease-in-out infinite }
+@keyframes busy-pulse { 50% { opacity: .38 } }
+
+.live-meta { display: flex; gap: 14px; margin-top: 2px; color: var(--scheme-outline); font-size: clamp(8px, 2.7vw, 11px); letter-spacing: .06em }
+.live-meta .on { color: var(--scheme-primary) }
 
 .controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 2px; font-size: 9px; color: var(--scheme-muted) }
 .system-flags { display: flex; gap: 12px; letter-spacing: .08em }

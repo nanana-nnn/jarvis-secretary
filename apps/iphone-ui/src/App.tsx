@@ -6,6 +6,7 @@ import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/
 import { DebugPanel } from "./components/DebugPanel";
 import { Fetch, type Facts } from "./components/Fetch";
 import { LavaCore } from "./components/LavaCore";
+import { Live, type LiveFacts } from "./components/Live";
 import { transition } from "./states/machine";
 import type { SecretaryEvent, SecretaryState } from "./states/types";
 
@@ -90,6 +91,8 @@ export default function App() {
     kernel: "…", uptime: "…", shell: "…", mem: "…", pkgs: 0, user: "…", hname: "…", distro: "…", host: "JARVIS",
   });
   const [settings, setSettings] = useState<ClapSettings>(loadClapSettings);
+  // 実測が届くまでは何も点灯させない（分からないものを「動いている」と出さない）
+  const [live, setLive] = useState<LiveFacts>({ apps: {}, vault: { tracked: false, dirty: -1 }, phones: 0 });
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
   // 検出コールバックは再生成しない（依存配列が空）ので、最新の状態は ref 経由で見る
@@ -136,6 +139,15 @@ export default function App() {
               document.documentElement.style.setProperty(variable, String(scheme[key as keyof Scheme]));
             }
           }
+        }
+
+        // 3段目の実測（5秒間隔）。形が違うものは捨てて、前の値を残す
+        if (event.type === "system.live" && event.apps && typeof event.apps === "object") {
+          setLive(previous => ({
+            apps: event.apps as LiveFacts["apps"],
+            vault: (event.vault && typeof event.vault === "object" ? event.vault : previous.vault) as LiveFacts["vault"],
+            phones: typeof event.phones === "number" ? event.phones : previous.phones,
+          }));
         }
 
         // PC の実測値（5秒間隔）。届いた項目だけ差し替え、欠けていれば前の値を残す
@@ -205,10 +217,7 @@ export default function App() {
       <LavaCore state={view} />
     </section>
 
-    <section className="state-panel panel">
-      <h1>{content.en}</h1>
-      <small>{content.code}</small>
-    </section>
+    <Live state={content.en} code={content.code} live={live} />
 
     <footer className="controls">
       <div className="system-flags"><span>VAULT 5</span><span>LAN SECURE</span><span>NO CLOUD</span></div>

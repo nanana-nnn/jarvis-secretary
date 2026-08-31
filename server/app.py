@@ -9,6 +9,7 @@ import platform
 import pwd
 import re
 import socket as system_socket
+import subprocess
 from time import monotonic_ns
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -19,6 +20,8 @@ from .config import Settings
 
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_SCHEME_PATH = Path.home() / ".local/state/caelestia/scheme.json"
+# 判断・記録の正本（AI_RULES.md の Vault）。VAULT_PATH で差し替えられる
+DEFAULT_VAULT_PATH = Path(os.getenv("VAULT_PATH") or Path.home() / "ドキュメント/Start Vault")
 HEX_COLOUR = re.compile(r"^[0-9a-fA-F]{6}$")
 SCHEME_KEYS = (
     "background",
@@ -120,6 +123,81 @@ def read_packages() -> int:
     return total
 
 
+# 3段目に出す「生きているもの」。名前は /proc/<pid>/comm と cmdline の両方で見る
+# （electron 系は comm が "obsidian" にならないことがあるため）。
+# ここに嘘を混ぜない。検出できないものは足さないこと。
+WATCHED = (
+    ("obsidian", ("obsidian",)),
+    ("codex", ("codex",)),
+    ("claude", ("claude",)),
+    ("chrome", ("chrome", "chromium")),
+    ("term", ("foot", "kitty", "alacritty")),
+)
+
+
+def read_processes(seen: dict[str, tuple[int, float]]) -> dict[str, dict[str, object]]:
+    """監視対象ごとに、動いているか（alive）と処理中か（busy）を返す。
+
+    busy は CPU 時間の増え方で見る。前回の観測との差分が要るので、
+    最初の1回は必ず False になる（起動直後に「処理中」と嘘をつかないため）。
+
+    `seen` は呼び出し側が持つ。モジュール変数にすると別インスタンスへ状態が
+    漏れて「初回は False」が保証できなくなる（テストで実際に破れた）。
+    """
+    ticks = os.sysconf("SC_CLK_TCK")
+    now = monotonic_ns() / 1e9
+    totals = {name: 0 for name, _ in WATCHED}
+    found = {name: False for name, _ in WATCHED}
+
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            comm = (entry / "comm").read_text(encoding="utf-8", errors="ignore").strip().lower()
+            cmdline = (entry / "cmdline").read_bytes().decode("utf-8", "ignore").replace("\0", " ").lower()
+            stat = (entry / "stat").read_text(encoding="utf-8", errors="ignore")
+        except (OSError, ValueError):
+            continue
+        haystack = f"{comm} {cmdline}"
+        for name, needles in WATCHED:
+            if not any(n in haystack for n in needles):
+                continue
+            found[name] = True
+            # stat は comm に空白を含みうるので、必ず最後の ')' より後ろを読む
+            fields = stat[stat.rfind(")") + 2:].split()
+            with suppress(IndexError, ValueError):
+                totals[name] += int(fields[11]) + int(fields[12])  # utime + stime
+
+    result: dict[str, dict[str, object]] = {}
+    for name, _ in WATCHED:
+        busy = False
+        previous = seen.get(name)
+        if previous is not None:
+            elapsed = now - previous[1]
+            if elapsed > 0:
+                # 1コアの5%以上を使っていたら「処理中」とみなす
+                busy = (totals[name] - previous[0]) / ticks / elapsed > 0.05
+        seen[name] = (totals[name], now)
+        result[name] = {"alive": found[name], "busy": busy and found[name]}
+    return result
+
+
+def read_vault(vault: Path) -> dict[str, object]:
+    """Vault が git 管理下にあるか、未コミットが何件あるか。数えられなければ触れない。"""
+    head = vault / ".git"
+    if not head.exists():
+        return {"tracked": False, "dirty": 0}
+    dirty = 0
+    try:
+        # git を呼ばずに済ませたいが、状態の正確さは git にしか出せない
+        out = subprocess.run(["git", "-C", str(vault), "status", "--porcelain"],
+                             capture_output=True, text=True, timeout=5)
+        dirty = len([line for line in out.stdout.splitlines() if line.strip()])
+    except (OSError, subprocess.SubprocessError):
+        return {"tracked": True, "dirty": -1}  # 数えられなかった。0 と偽らない
+    return {"tracked": True, "dirty": dirty}
+
+
 def read_telemetry() -> dict[str, object]:
     used_ratio, used_gib, total_gib, uptime_seconds = 0.0, 0.0, 0.0, 0.0
     try:
@@ -147,9 +225,12 @@ def read_telemetry() -> dict[str, object]:
     }
 
 
-def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCHEME_PATH) -> FastAPI:
+def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCHEME_PATH,
+               vault_path: Path = DEFAULT_VAULT_PATH) -> FastAPI:
     config = settings or Settings.from_env()
     clients: set[WebSocket] = set()
+    # busy 判定に使う直前の CPU 時間。アプリ単位で持つ（モジュール変数にしない）
+    cpu_seen: dict[str, tuple[int, float]] = {}
 
     async def watch_scheme() -> None:
         previous = read_scheme(scheme_path)
@@ -163,12 +244,27 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                         await client.send_json(event)
             await asyncio.sleep(1)
 
+    def live_event() -> dict[str, object]:
+        """3段目に出す「今どうなっているか」。すべて実測。数えられないものは出さない。
+
+        重い処理（/proc の全走査と git status）が入るので、5秒間隔の
+        テレメトリと同じ便に乗せて回数を増やさない。
+        """
+        return {
+            "type": "system.live",
+            "apps": read_processes(cpu_seen),
+            "vault": read_vault(vault_path),
+            "phones": len(clients),   # 実際に繋がっている台数。サーバーが持っている
+            "ts": timestamp_ms(),
+        }
+
     async def push_telemetry() -> None:
         while True:
-            event = read_telemetry()
+            events = (read_telemetry(), live_event())
             for client in tuple(clients):
-                with suppress(RuntimeError, WebSocketDisconnect):
-                    await client.send_json(event)
+                for event in events:
+                    with suppress(RuntimeError, WebSocketDisconnect):
+                        await client.send_json(event)
             await asyncio.sleep(5)
 
     @asynccontextmanager
@@ -210,6 +306,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         await socket.send_json({"type": "connection.ready", "ts": timestamp_ms()})
         await socket.send_json(scheme_event(scheme_path))
         await socket.send_json(read_telemetry())
+        await socket.send_json(live_event())
         try:
             while True:
                 message = await socket.receive_json()

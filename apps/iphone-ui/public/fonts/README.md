@@ -19,7 +19,12 @@ pyftsubset /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Regular.ttf \
   --flavor=woff2 --output-file=jbmono-nerd-regular.woff2
 ```
 
-アイコンのコードポイントは推測せず `~/.config/fastfetch/config.jsonc` から取る。
+アイコンのコードポイントは推測せず、出どころから取る。
+- fetch(1段目)の8字 … `~/.config/fastfetch/config.jsonc` の key に埋まっている
+- live(3段目)の7字 … **必ず一度描いて字を目で確かめてから入れる**
+
+2026-08-31、記憶で書いたら md-brain のつもりが再生ボタン、sparkle のつもりが
+車になった。候補を並べて描いた画像で確認してから決めること。
 
 ## ライセンス
 

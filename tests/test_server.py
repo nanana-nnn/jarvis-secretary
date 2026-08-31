@@ -3,12 +3,24 @@ import re
 
 from fastapi.testclient import TestClient
 
-from server.app import create_app, format_uptime, read_primary, read_scheme, read_telemetry
+from server.app import create_app, format_uptime, read_primary, read_processes, read_scheme, read_telemetry
 from server.config import Settings
 
 
 SETTINGS = Settings("127.0.0.1", 8787, Path("cert"), Path("key"), ("https://phone.test",))
 NO_SCHEME = Path("/path/that/does/not/exist/scheme.json")
+
+
+def receive_until(socket, wanted: str, limit: int = 8) -> dict:
+    """指定の type が来るまで読み飛ばす。
+
+    接続直後に送る種類が増えても壊れないように、順序と件数に依存させない。
+    """
+    for _ in range(limit):
+        event = socket.receive_json()
+        if event["type"] == wanted:
+            return event
+    raise AssertionError(f"{wanted} が {limit} 件以内に来なかった")
 
 
 def test_health_reports_phase_one_connection_capabilities() -> None:
@@ -22,12 +34,11 @@ def test_websocket_ready_and_ping() -> None:
     with TestClient(create_app(SETTINGS, NO_SCHEME)) as client:
         with client.websocket_connect("/ws", headers={"origin": "https://phone.test"}) as socket:
             assert socket.receive_json()["type"] == "connection.ready"
-            event = socket.receive_json()
-            assert event["type"] == "scheme.changed"
-            assert event["scheme"] is None
-            assert socket.receive_json()["type"] == "system.telemetry"
+            assert receive_until(socket, "scheme.changed")["scheme"] is None
+            receive_until(socket, "system.telemetry")
+            receive_until(socket, "system.live")
             socket.send_json({"type": "connection.ping"})
-            assert socket.receive_json()["type"] == "connection.pong"
+            assert receive_until(socket, "connection.pong")
 
 
 def test_scheme_primary_is_sent_on_connect(tmp_path: Path) -> None:
@@ -40,11 +51,10 @@ def test_scheme_primary_is_sent_on_connect(tmp_path: Path) -> None:
     with TestClient(create_app(SETTINGS, scheme)) as client:
         with client.websocket_connect("/ws", headers={"origin": "https://phone.test"}) as socket:
             assert socket.receive_json()["type"] == "connection.ready"
-            event = socket.receive_json()
-            assert event["type"] == "scheme.changed"
+            event = receive_until(socket, "scheme.changed")
             assert event["scheme"]["mode"] == "light"
             assert event["scheme"]["primary"] == "#1b696f"
-            assert socket.receive_json()["type"] == "system.telemetry"
+            receive_until(socket, "system.telemetry")
 
 
 def test_invalid_or_missing_scheme_falls_back_to_none(tmp_path: Path) -> None:
@@ -94,7 +104,7 @@ def test_scheme_change_is_pushed_without_reconnecting(tmp_path: Path) -> None:
     with TestClient(create_app(SETTINGS, scheme)) as client:
         with client.websocket_connect("/ws", headers={"origin": "https://phone.test"}) as socket:
             assert socket.receive_json()["type"] == "connection.ready"
-            assert socket.receive_json()["scheme"]["mode"] == "light"
+            assert receive_until(socket, "scheme.changed")["scheme"]["mode"] == "light"
 
             write("dark", "9ccfdb")  # caelestia がテーマを切り替えたのと同じこと
 
@@ -109,14 +119,46 @@ def test_scheme_change_is_pushed_without_reconnecting(tmp_path: Path) -> None:
                 raise AssertionError("scheme.changed が再送されなかった")
 
 
+def test_live_reports_only_measured_state(tmp_path: Path) -> None:
+    """3段目は実測だけを出す。分からないものを 0 や False と偽らないこと。"""
+    with TestClient(create_app(SETTINGS, NO_SCHEME, tmp_path)) as client:
+        with client.websocket_connect("/ws", headers={"origin": "https://phone.test"}) as socket:
+            live = receive_until(socket, "system.live")
+
+    # 監視対象は必ず alive/busy の両方を持つ。欠けると画面が黙って消灯する
+    for name, state in live["apps"].items():
+        assert set(state) == {"alive", "busy"}, name
+        assert isinstance(state["alive"], bool) and isinstance(state["busy"], bool)
+
+    # git 管理下でない場所を渡したので、dirty を 0 と偽らず tracked=False を返す
+    assert live["vault"] == {"tracked": False, "dirty": 0}
+
+    # 接続しているのは自分だけ
+    assert live["phones"] == 1
+
+
+def test_busy_needs_a_previous_observation() -> None:
+    """busy は CPU 時間の差分。観測が1回しかない時点で「処理中」と言わないこと。
+
+    接続時の live には背景タスクが先に1回観測している分の差分が乗りうるので、
+    保証したいのはこの関数の性質そのもの。ここで直接確かめる。
+    """
+    seen: dict[str, tuple[int, float]] = {}
+    first = read_processes(seen)
+    assert all(not state["busy"] for state in first.values())
+    assert seen, "次回の差分に使う観測が残っていない"
+
+    # 2回目以降は差分が取れるので busy が立ちうる（真偽は実機の負荷しだい）
+    second = read_processes(seen)
+    assert set(second) == set(first)
+
+
 def test_websocket_accepts_wake_candidate_log() -> None:
     with TestClient(create_app(SETTINGS, NO_SCHEME)) as client:
         with client.websocket_connect("/ws", headers={"origin": "https://phone.test"}) as socket:
             assert socket.receive_json()["type"] == "connection.ready"
-            event = socket.receive_json()
-            assert event["type"] == "scheme.changed"
-            assert event["scheme"] is None
-            assert socket.receive_json()["type"] == "system.telemetry"
+            assert receive_until(socket, "scheme.changed")["scheme"] is None
+            receive_until(socket, "system.telemetry")
             socket.send_json({
                 "type": "clap.candidate",
                 "rms": 0.031,
