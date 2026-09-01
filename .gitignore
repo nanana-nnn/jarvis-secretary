@@ -1,4 +1,5 @@
 .env
+.env.bak.*
 certs/
 logs/
 node_modules/
