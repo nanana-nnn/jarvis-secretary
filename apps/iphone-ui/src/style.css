@@ -40,8 +40,11 @@ button { font: inherit; color: inherit }
 /* 各段は中身の高さで決まり、余りは段の間へ配す（sysmon の3枚と同じ間合いにする）。
    1fr にすると2段目だけ間延びして、ドットの上下に大きな空きができる */
 /* 3段目は中身なりの高さにして、余り(と不足)は2段目に持たせる。
-   2段目のキャンバスは max-height で縮めるので、画面が短い端末でも
-   3段目が見切れない（Safari のツールバーぶんで実際に溢れていた）*/
+   2段目は minmax(0,1fr) なので min-height が 0 まで潰れ、画面が短い端末でも
+   3段目を押し出さない（Safari のツールバーぶんで実際に溢れていた）。
+   max-height は付けない。余った高さは全部2段目のコアが受ける方針
+   （2026-09-01 決定。実測で Safari 142px / ホーム画面PWA 214px と差は出るが、
+   PWA は画面が 145px 高いぶんなので想定どおり）*/
 .shell {
   position: relative; width: 100%; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 10px;
@@ -197,9 +200,15 @@ button { font: inherit; color: inherit }
 .live-meta .on { color: var(--scheme-primary) }
 
 /* ツールバーぶん(lvh-dvh)を操作列の下に足して、中身を見える範囲へ収める。
-   横画面・standalone では差が 0 になり、そのまま下まで使える */
+   横画面・standalone では差が 0 になり、そのまま下まで使える。
+   safe-area-inset-bottom は「そのまま」足す。*0.25 にしていたが、Safari では
+   この値が常に 0 で一度も効かず、ホーム画面 PWA で初めて非0になったときに
+   34px 必要なところへ 9px しか確保せず、操作列がホームインジケータの下へ
+   潜っていた（2026-09-01 実機計測：Safari safe-bottom 0 / pad-b 44、
+   PWA safe-bottom 34 / pad-b 9、ctrl 下端 844 = 画面の実端）。
+   Safari 側は max(4px, 0) のままなので 44 で変わらない */
 .controls { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 0 4px calc(max(4px, env(safe-area-inset-bottom) * 0.25) + (100lvh - 100dvh)); font-size: 9px; color: var(--scheme-muted) }
+  padding: 0 4px calc(max(4px, env(safe-area-inset-bottom)) + (100lvh - 100dvh)); font-size: 9px; color: var(--scheme-muted) }
 .system-flags { display: flex; gap: 12px; letter-spacing: .08em }
 .system-flags span:before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 5px 2px 0; border-radius: 50%; background: var(--scheme-primary) }
 .actions { display: flex; align-items: center; gap: 6px }

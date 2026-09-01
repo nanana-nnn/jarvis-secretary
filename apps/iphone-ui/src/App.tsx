@@ -394,6 +394,8 @@ export default function App() {
       </div>
     </footer>
     {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} /> : null}
-    {params?.get("size") === "1" ? <SizeProbe /> : null}
+    {/* ホーム画面 PWA では start_url が "/" なので ?size=1 が届かない。
+        崩れるのが standalone のときだけなので、DEBUG からも出す */}
+    {showDebug || params?.get("size") === "1" ? <SizeProbe /> : null}
   </main>;
 }
