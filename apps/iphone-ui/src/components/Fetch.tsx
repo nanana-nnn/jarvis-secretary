@@ -36,14 +36,16 @@ const LOGO = [
  * 実物は端末での見え方に合わせてアイコンの後ろの空白を1〜2個で書き分けているが、
  * ここは Mono 版（全字が同じ送り）を当てるので一律にして桁を揃える。
  */
+// user と distro は表示から外した（本人の判断、2026-09-01）。
+// 単一ユーザー・単一機種の常設端末では毎回同じ値しか出ず、5段目・6段目として
+// 場所を取るだけだった。Facts 型と telemetry の送信自体は変えていない
+// （他で使う可能性があるため）。
 const ROWS: { key: keyof Facts; icon: string }[] = [
   { key: "kernel", icon: "\uf473" },
   { key: "uptime", icon: "\ue385" },
   { key: "shell", icon: "\uf489" },
   { key: "mem", icon: "\uefc5" },
   { key: "pkgs", icon: "\uf487" },
-  { key: "user", icon: "\uf007" },
-  { key: "distro", icon: "\u{f0ec0}" },
 ];
 
 const WIDTH = 37;        // 枠の総桁数。ロゴ(slant)の幅と揃えてある
