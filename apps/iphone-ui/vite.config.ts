@@ -19,6 +19,9 @@ export default defineConfig(({ mode }) => {
     },
     // 壁紙はサーバーが縮めて配る。ここを通さないとプレビューで 404 になる
     "/wallpaper.webp": { target: api, secure: false, changeOrigin: true },
+    // 承認／却下は同一オリジンの相対URLで呼ぶ。iPhoneが5173へ送った
+    // POSTをFastAPIへ中継しないと、承認画面だけがViteの404になる。
+    "/jobs": { target: api, secure: false, changeOrigin: true },
   };
   return {
     envDir: root,

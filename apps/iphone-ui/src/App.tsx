@@ -109,6 +109,7 @@ export default function App() {
   const [heardNothingAt, setHeardNothingAt] = useState(0);
   // 読み上げる答え。聞き取った文ではなく、これを喋る
   const [reply, setReply] = useState("");
+  const [approval, setApproval] = useState<{ id: string; summary: string; files: string[]; diff: string; warnings: string[] } | null>(null);
   // マイクが止まったまま起こせない状態。ユーザー操作が要るので画面に出す
   const [micStalled, setMicStalled] = useState(false);
   // 画面を消させない（常設端末なので寝ると指パッチンも聞けない）
@@ -132,9 +133,16 @@ export default function App() {
       if (last) socketRef.current?.send({ type: "clap.candidate", ...last });
     },
   ), []);
-  // 録音した 16kHz PCM は binary フレームで送る（DESIGN.md §8/§12）
+  // 録音した 16kHz PCM は binary フレームで送る（DESIGN.md §8/§12）。
+  // ただし送るのは §4 のとおり「会話中」だけ。待機中は指パッチ判定だけを
+  // 端末で回す（detector はこのコールバックとは別に常時回っている）。
+  // 常時送っていたため、エージェントが考えている20〜40秒のあいだにも音声が
+  // 溜まり続け、接続が切れて STANDBY へ戻っていた（2026-09-01 実機）
   const microphone = useMemo(
-    () => new ClapMicrophone(detector, chunk => socketRef.current?.sendAudio(chunk)),
+    () => new ClapMicrophone(detector, chunk => {
+      if (stateRef.current !== "LISTENING") return;
+      socketRef.current?.sendAudio(chunk);
+    }),
     [detector]);
 
   useEffect(() => { detector.update(settings); saveClapSettings(settings); }, [detector, settings]);
@@ -189,6 +197,21 @@ export default function App() {
           setCaption(typeof event.summary === "string" && event.summary ? event.summary : spoken);
           setReply(spoken);
           send("AGENT_COMPLETED");
+        }
+
+        // Phase 4: display the exact proposed files and diff before the real
+        // Vault can be touched.  Approval itself is a separate HTTP request.
+        if (event.type === "approval.required" && typeof event.job_id === "string") {
+          setApproval({
+            id: event.job_id,
+            summary: typeof event.summary === "string" ? event.summary : "",
+            files: Array.isArray(event.changed_files) ? event.changed_files.filter((file): file is string => typeof file === "string") : [],
+            diff: typeof event.diff === "string" ? event.diff : "",
+            // §11-3 対象が既に dirty なら承認前に見せる。押す前に読めないと意味がない
+            warnings: Array.isArray(event.warnings) ? event.warnings.filter((line): line is string => typeof line === "string") : [],
+          });
+          setCaption("CHANGE REVIEW REQUIRED");
+          send("APPROVAL_REQUIRED");
         }
 
         // 待機へ戻す指示（「ありがとう」など §9 の SYSTEM）
@@ -362,6 +385,23 @@ export default function App() {
     }
   }
 
+  async function decideApproval(approve: boolean) {
+    if (!approval) return;
+    const current = approval;
+    try {
+      const response = await fetch(`/jobs/${encodeURIComponent(current.id)}/${approve ? "approve" : "reject"}`, { method: "POST" });
+      const result = await response.json() as { summary?: string; spoken_reply?: string };
+      if (!response.ok) throw new Error(typeof result.summary === "string" ? result.summary : "APPROVAL FAILED");
+      setApproval(null);
+      setCaption(typeof result.summary === "string" ? result.summary : "CHANGE REVIEW COMPLETE");
+      setReply(typeof result.spoken_reply === "string" ? result.spoken_reply : "");
+      send("AGENT_COMPLETED");
+    } catch (error) {
+      setCaption(error instanceof Error ? error.message : "APPROVAL FAILED");
+      send("SYSTEM_ERROR");
+    }
+  }
+
   const preview = params?.get("state")?.toUpperCase() as SecretaryState | undefined;
   const view = preview && preview in copy ? preview : state;
   const content = copy[view];
@@ -379,9 +419,26 @@ export default function App() {
 
     <Live state={content.en} code={content.code} live={live} caption={caption} />
 
+    {approval ? <section className="approval panel" aria-live="polite">
+      <div>REVIEW CHANGES</div>
+      {approval.warnings.map(line => <p className="approval-warning" key={line}>! {line}</p>)}
+      <p>{approval.summary}</p>
+      <code>{approval.files.join("\n")}</code>
+      <pre>{approval.diff}</pre>
+      <div className="approval-actions">
+        <button className="primary-action" onClick={() => { void decideApproval(true); }}>APPROVE</button>
+        <button className="warning-action" onClick={() => { void decideApproval(false); }}>REJECT</button>
+      </div>
+    </section> : null}
+
     <footer className="controls">
       <div className="system-flags">
-        <span>VAULT 5</span><span>LAN SECURE</span><span>NO CLOUD</span>
+        {/* "VAULT 5" という固定値がずっと出ていた。飾りで、実測ではなかった
+            （2026-09-01、実機の表示とPCのgit statusが食い違って発覚）。
+            Live.tsx の live-meta に同じ実測を出す仕組みが既にあるので、
+            ここもそれへ合わせる。「点灯はすべてサーバーの実測」の原則どおり */}
+        <span>VAULT {!live.vault.tracked ? "?" : live.vault.dirty < 0 ? "?" : live.vault.dirty}</span>
+        <span>LAN SECURE</span><span>NO CLOUD</span>
         {mic === "on" ? <span>{awake ? "SCREEN ON" : "SCREEN LOCKS"}</span> : null}
       </div>
       <div className="actions">

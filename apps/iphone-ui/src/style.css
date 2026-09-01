@@ -217,6 +217,13 @@ button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 7
 .debug-action { width: 30px; padding-inline: 0 }
 .mic-live { color: var(--scheme-primary); letter-spacing: .08em }
 .warning { color: var(--scheme-error) }
+.warning-action { color: var(--scheme-error); border-color: var(--scheme-error) }
+.approval { position: absolute; z-index: 15; inset: 8px; overflow: auto; padding: 14px; border: 1px solid var(--scheme-primary); color: var(--scheme-text); font-size: 11px; line-height: 1.45 }
+.approval p, .approval pre { white-space: pre-wrap; overflow-wrap: anywhere }
+.approval pre { max-height: 34vh; overflow: auto; padding: 8px; border: 1px solid var(--scheme-outline); color: var(--scheme-muted) }
+.approval code { display: block; padding: 7px 0; color: var(--scheme-primary) }
+.approval-warning { color: var(--scheme-error) }
+.approval-actions { display: flex; gap: 8px; justify-content: flex-end }
 
 .size-probe { position: fixed; z-index: 50; left: 8px; bottom: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.82); color: #7CFC98; font: 11px/1.5 var(--mono); pointer-events: none }
 .debug { position: absolute; z-index: 20; inset: 14px; overflow: auto; padding: 16px; border: 1px solid var(--scheme-outline); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 96%, transparent); font-size: 10px; line-height: 1.5 }

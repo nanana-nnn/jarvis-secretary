@@ -12,6 +12,7 @@ class Settings:
     tls_cert: Path
     tls_key: Path
     allowed_origins: tuple[str, ...]
+    log_path: Path = Path("./logs/operations.jsonl")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -24,6 +25,7 @@ class Settings:
             tls_cert=Path(os.getenv("TLS_CERT", "./certs/lan.crt")),
             tls_key=Path(os.getenv("TLS_KEY", "./certs/lan.key")),
             allowed_origins=origins,
+            log_path=Path(os.getenv("LOG_PATH", "./logs/operations.jsonl")),
         )
 
     def validate_tls(self) -> None:

@@ -10,9 +10,11 @@ import pwd
 import re
 import socket as system_socket
 import subprocess
+import shutil
+import uuid
 from time import monotonic_ns
 
-from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,9 +24,13 @@ from .config import Settings
 from .router import route
 from .transcribe import Transcriber
 from . import vault as vault_reader
+from .write import WriteRejected, apply_proposal
 
 
 logger = logging.getLogger("uvicorn.error")
+
+# §11 承認フロー「120秒無操作 → 自動却下」
+APPROVAL_TIMEOUT_S = 120
 DEFAULT_SCHEME_PATH = Path.home() / ".local/state/caelestia/scheme.json"
 # caelestia が今出している壁紙。配色と同じタイミングで書き換わる
 DEFAULT_WALLPAPER_PATH = Path.home() / ".local/state/caelestia/wallpaper/path.txt"
@@ -210,6 +216,39 @@ def read_vault(vault: Path) -> dict[str, object]:
     return {"tracked": True, "dirty": dirty}
 
 
+def dirty_paths(vault: Path) -> set[str] | None:
+    """§11-1 実行前の `git status --porcelain`。ユーザーの既存変更を識別するために使う。
+
+    数えられなかったときは空集合ではなく None を返す。「dirty が無い」と
+    「調べられなかった」を同じ値にすると、警告を出すべき場面で黙ってしまう。
+    -z なので core.quotepath による引用が入らず、日本語パスもそのまま取れる。
+    """
+    if not (vault / ".git").exists():
+        return None
+    try:
+        out = subprocess.run(["git", "-C", str(vault), "status", "--porcelain=v1", "-z"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    entries = out.stdout.split("\0")
+    paths: set[str] = set()
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        paths.add(entry[3:])
+        # R/C は「移動元」が次のエントリに続く。両方ユーザーの変更として数える
+        if entry[0] in ("R", "C"):
+            if index < len(entries) and entries[index]:
+                paths.add(entries[index])
+            index += 1
+    return paths
+
+
 def wallpaper_source() -> Path | None:
     """caelestia が今出している壁紙の実体パス。読めなければ None。"""
     try:
@@ -298,6 +337,87 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     transcriber = Transcriber()
     # エージェントは同時1ジョブ（§10）。アプリで1つ持って直列化する
     agent = CodexAgent(vault_path)
+    # どのバックエンドで動いているかは起動ログでしか分からない（.env は
+    # 実行時に load_dotenv で読むので /proc/<pid>/environ には出ない）
+    logger.info("[AGENT] %s", agent.command)
+    logger.info("[AGENT] sandbox read=%s write=%s", agent.sandbox_read, agent.sandbox_write)
+    pending: dict[str, dict[str, object]] = {}
+
+    def operation_log(entry: dict[str, object]) -> None:
+        """Append-only audit log outside the Vault (DESIGN.md §11)."""
+        path = Path(config.log_path)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"ts": timestamp_ms(), **entry}, ensure_ascii=False) + "\n")
+
+    def discard(job: dict[str, object]) -> None:
+        """Drop the proposal copy. The real Vault was never touched, so there is nothing to undo."""
+        timer = job.get("timer")
+        if isinstance(timer, asyncio.Task):
+            timer.cancel()
+        proposal = job["proposal"]
+        if isinstance(proposal, Path):
+            shutil.rmtree(proposal.parent, ignore_errors=True)
+
+    async def resolve_pending(job_id: str, approve: bool) -> dict[str, object]:
+        job = pending.pop(job_id, None)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown or expired job")
+        proposal = job["proposal"]
+        assert isinstance(proposal, Path)
+        timer = job.get("timer")
+        if isinstance(timer, asyncio.Task):
+            timer.cancel()
+        try:
+            if not approve:
+                operation_log({"intent": job["intent"], "text": job["text"], "changed_files": job["changed_files"],
+                               "approved": False, "reason": "rejected"})
+                return {"job_id": job_id, "applied": False, "summary": "変更を破棄しました。", "spoken_reply": "変更を破棄しました。"}
+            originals = job["original_contents"]
+            assert isinstance(originals, dict)
+            for relative, original in originals.items():
+                target = vault_path / str(relative)
+                current = target.read_bytes() if target.is_file() else None
+                if current != original:
+                    operation_log({"intent": job["intent"], "text": job["text"], "changed_files": job["changed_files"],
+                                   "approved": False, "reason": "conflict", "conflict": str(relative)})
+                    raise HTTPException(status_code=409, detail="VAULT_DIRTY: target changed after proposal")
+            changed = job["changed_files"]
+            assert isinstance(changed, list)
+            apply_proposal(vault_path, proposal, [str(path) for path in changed])
+            operation_log({"intent": job["intent"], "text": job["text"], "changed_files": changed,
+                           "approved": True, "warnings": job.get("warnings", [])})
+            return {"job_id": job_id, "applied": True, "summary": job["summary"], "spoken_reply": job["spoken_reply"]}
+        except WriteRejected as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            shutil.rmtree(proposal.parent, ignore_errors=True)
+
+    async def auto_reject(job_id: str, socket: WebSocket) -> None:
+        """§11「120秒無操作 → 自動却下」。提案は破棄し、端末にも結果を返す。
+
+        タイマーを置かないと、提案の Vault コピーが temp に残り続ける。
+        承認画面を開いたまま端末が寝る／離れるのは常設端末では普通に起きる。
+        """
+        try:
+            await asyncio.sleep(APPROVAL_TIMEOUT_S)
+        except asyncio.CancelledError:
+            return
+        job = pending.pop(job_id, None)
+        if job is None:
+            return
+        operation_log({"intent": job["intent"], "text": job["text"], "changed_files": job["changed_files"],
+                       "approved": False, "reason": "timeout"})
+        discard(job)
+        with suppress(Exception):
+            await socket.send_json({
+                "type": "agent.completed", "intent": job["intent"], "job_id": job_id, "applied": False,
+                "summary": "確認がなかったので変更を破棄しました。",
+                "spoken_reply": "確認がなかったので変更を破棄しました。",
+                "sources": [], "took": 0, "ts": timestamp_ms(),
+            })
 
     async def watch_scheme() -> None:
         previous = read_scheme(scheme_path)
@@ -354,6 +474,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = config
+        # 承認待ちの一覧。承認は WS ではなく HTTP で来るので、外から見える所に置く
+        app.state.pending = pending
         watcher = asyncio.create_task(watch_scheme())
         telemetry = asyncio.create_task(push_telemetry())
         try:
@@ -371,9 +493,17 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         CORSMiddleware,
         allow_origins=list(config.allowed_origins),
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    @app.post("/jobs/{job_id}/approve")
+    async def approve(job_id: str) -> dict[str, object]:
+        return await resolve_pending(job_id, approve=True)
+
+    @app.post("/jobs/{job_id}/reject")
+    async def reject(job_id: str) -> dict[str, object]:
+        return await resolve_pending(job_id, approve=False)
 
     @app.get("/health")
     async def health() -> dict[str, object]:
@@ -397,21 +527,40 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             return
         await socket.accept()
         clients.add(socket)
-        await socket.send_json({"type": "connection.ready", "ts": timestamp_ms()})
-        await socket.send_json(scheme_event(scheme_path))
-        await socket.send_json(wallpaper_event())
-        await socket.send_json(read_telemetry())
-        await socket.send_json(live_event())
+
+        async def emit(payload: dict) -> bool:
+            """切れたソケットへの送信で例外を上げない。
+
+            エージェントは20〜40秒かかるので、返ってきた時点で端末が
+            再接続済み＝この socket が閉じていることがある。そこで
+            RuntimeError が出るとハンドラごと落ち、提案が捨てられる
+            （2026-09-01 実機）。送れたかどうかだけ返す。
+            """
+            try:
+                await socket.send_json(payload)
+                return True
+            except (RuntimeError, WebSocketDisconnect):
+                return False
+
+        await emit({"type": "connection.ready", "ts": timestamp_ms()})
+        await emit(scheme_event(scheme_path))
+        await emit(wallpaper_event())
+        await emit(read_telemetry())
+        await emit(live_event())
         # §12「binary フレーム = 16kHz mono Int16 PCM」「text フレーム = JSON」
         splitter = SpeechSplitter()
         was_speaking = False
+        # 書き起こしとエージェントは受信ループの中で待たない。20〜40秒のあいだ
+        # socket.receive() が呼ばれないと、送られ続ける音声フレームが溜まって
+        # 接続が切れ、端末が再接続して STANDBY へ戻る（2026-09-01 実機）
+        job: asyncio.Task | None = None
 
         async def finish(utterance) -> None:
             """確定した発話を書き起こして返す。失敗は黙って捨てず理由を送る。"""
             logger.info("[STT] utterance %dms (%s)", utterance.ms, utterance.reason)
             result = await transcriber.transcribe(utterance.pcm)
             if result is None:
-                await socket.send_json({
+                await emit({
                     "type": "system.error", "code": "STT_UNAVAILABLE",
                     "message": transcriber.error or "model not loaded",
                     "retryable": False, "ts": timestamp_ms(),
@@ -420,12 +569,12 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             logger.info("[STT] %dms → %r", result.ms, result.text[:60])
             if not result.text:
                 # §17「聞き取れませんでした」と返して LISTENING へ戻す
-                await socket.send_json({
+                await emit({
                     "type": "system.error", "code": "STT_FAILED",
                     "message": "聞き取れませんでした", "retryable": True, "ts": timestamp_ms(),
                 })
                 return
-            await socket.send_json({
+            await emit({
                 "type": "audio.final", "text": result.text,
                 "ms": utterance.ms, "took": result.ms, "ts": timestamp_ms(),
             })
@@ -439,14 +588,14 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
 
             # §9「SYSTEM を最優先で判定する（エージェントを起動しない）」
             if decision.intent == "SYSTEM":
-                await socket.send_json({"type": "session.sleep", "reason": "system", "ts": timestamp_ms()})
+                await emit({"type": "session.sleep", "reason": "system", "ts": timestamp_ms()})
                 return
 
             # 決まった問いはファイルを読むだけで返す。Codex は実測 42.6 秒かかる
             if decision.direct:
                 found = vault_reader.answer(vault_path, decision.direct)
                 if found is not None:
-                    await socket.send_json({
+                    await emit({
                         "type": "agent.completed", "intent": decision.intent,
                         "summary": found.summary, "spoken_reply": found.spoken_reply,
                         "sources": found.sources, "took": 0, "ts": timestamp_ms(),
@@ -454,22 +603,64 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                     return
 
             # ここから先は時間がかかる。待たせると分かるよう先に知らせる（§12）
-            await socket.send_json({
+            await emit({
                 "type": "agent.started", "intent": decision.intent,
                 "matched": decision.matched, "ts": timestamp_ms(),
             })
             started = timestamp_ms()
+            # §11-1 実行前の状態を保存する。実行後に取ると、ユーザーが作業中に
+            # 触ったぶんと区別できなくなる
+            before_dirty = dirty_paths(vault_path) if decision.mode == "propose_write" else None
             outcome = await agent.run(text, decision.mode)
             took = timestamp_ms() - started
             if outcome.error:
                 logger.warning("[AGENT] %s (%dms)", outcome.error, took)
-                await socket.send_json({
+                await emit({
                     "type": "system.error", "code": outcome.error.split(":")[0],
                     "message": outcome.error, "retryable": True, "ts": timestamp_ms(),
                 })
                 return
+            if outcome.proposed_root is not None:
+                # The agent changed only its temporary Vault copy.  Keep that
+                # copy as the exact approval artifact; the real Vault remains
+                # untouched until the HTTP approval endpoint verifies and applies it.
+                job_id = uuid.uuid4().hex
+                # §11-3 既にユーザーの未コミット変更があるファイルは、承認画面で警告を出す。
+                # 止めはしない（判断はユーザー）が、黙って上書きさせない
+                if before_dirty is None:
+                    warnings = ["未コミット変更を確認できませんでした。上書き前に手元で確認してください。"]
+                else:
+                    warnings = [f"{name} には未コミットの変更があります。承認すると上書きされます。"
+                                for name in outcome.changed_files if name in before_dirty]
+                pending[job_id] = {
+                    "proposal": outcome.proposed_root,
+                    "original_contents": outcome.original_contents,
+                    "changed_files": outcome.changed_files,
+                    "intent": decision.intent,
+                    "text": text,
+                    "summary": outcome.summary,
+                    "spoken_reply": outcome.spoken_reply,
+                    "warnings": warnings,
+                }
+                pending[job_id]["timer"] = asyncio.create_task(auto_reject(job_id, socket))
+                sent = await emit({
+                    "type": "approval.required", "job_id": job_id,
+                    "summary": outcome.summary, "changed_files": outcome.changed_files,
+                    "diff": outcome.diff, "warnings": warnings, "ts": timestamp_ms(),
+                })
+                if not sent:
+                    # 承認画面を出せなかった提案は残さない。押す手段が無いまま
+                    # Vault 1個ぶんのコピーが temp に積まれる
+                    logger.warning("[AGENT] approval could not be delivered; proposal dropped")
+                    stale = pending.pop(job_id, None)
+                    if stale is not None:
+                        operation_log({"intent": stale["intent"], "text": stale["text"],
+                                       "changed_files": stale["changed_files"],
+                                       "approved": False, "reason": "undeliverable"})
+                        discard(stale)
+                return
             logger.info("[AGENT] %dms → %r", took, outcome.spoken_reply[:60])
-            await socket.send_json({
+            await emit({
                 "type": "agent.completed", "intent": decision.intent,
                 "summary": outcome.summary, "spoken_reply": outcome.spoken_reply,
                 "sources": outcome.sources, "took": took, "ts": timestamp_ms(),
@@ -485,13 +676,18 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                 chunk = packet.get("bytes")
                 if chunk:
                     for utterance in splitter.feed(chunk):
-                        await finish(utterance)
+                        if job is not None and not job.done():
+                            # §10「同時実行は1ジョブ」。考えている最中のマイクは
+                            # ほぼ環境音なので、待たせずに捨てる
+                            logger.info("[STT] busy, dropped utterance %dms", utterance.ms)
+                            continue
+                        job = asyncio.create_task(finish(utterance))
                     # 話し始めたことを伝える。iPhone 側はこれで待機へ戻る
                     # タイマーを止める（話している最中に寝てしまっていた）
                     if splitter.speaking != was_speaking:
                         was_speaking = splitter.speaking
                         if was_speaking:
-                            await socket.send_json({"type": "audio.speaking", "ts": timestamp_ms()})
+                            await emit({"type": "audio.speaking", "ts": timestamp_ms()})
                     continue
 
                 text = packet.get("text")
@@ -500,7 +696,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                 with suppress(json.JSONDecodeError):
                     message = json.loads(text)
                     if message.get("type") == "connection.ping":
-                        await socket.send_json({"type": "connection.pong", "ts": timestamp_ms()})
+                        await emit({"type": "connection.pong", "ts": timestamp_ms()})
                     elif message.get("type") == "clap.candidate":
                         logger.info(
                             "[WAKE] rms=%.3f hf=%.2f rise=%dms accepted=%s reason=%s",
@@ -525,6 +721,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         finally:
             # 切断時に話しかけていた分は書き起こさない（返す先がもう無い）
             splitter.flush()
+            if job is not None and not job.done():
+                job.cancel()
             clients.discard(socket)
 
     return app

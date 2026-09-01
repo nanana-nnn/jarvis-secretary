@@ -1,10 +1,16 @@
 """エージェントアダプター（DESIGN.md §10）。
 
-MVP で実装するのは Codex のみ。Claude Code は同じ形で足せるようにしておく。
+既定は Codex CLI（§2 の確定事項）。**バックエンドはコマンドテンプレートで決まる**ので、
+Claude Code へは `.env` の差し替えだけで切り替わる（クラスは共通のまま）。
 
-**コマンドはハードコードしない。** §10 のとおり `.env` の `CODEX_CMD` に
-テンプレートで持ち、`{prompt_file}` `{cwd}` `{schema_file}` `{out_file}` を置換する。
-`codex exec --help` で確認した確定形を `.env.example` に書いてある。
+**コマンドはハードコードしない。** §10 のとおり `.env` の `AGENT_CMD`
+（旧 `CODEX_CMD` も可）にテンプレートで持ち、`{sandbox}` `{prompt_file}` `{cwd}`
+`{schema_file}` `{out_file}` を置換する。両方の確定形を `.env.example` に書いてある。
+
+契約は3つだけ。ここさえ満たせばどの CLI でも入る:
+  - プロンプトは **stdin** から受け取る
+  - 答えの JSON（SCHEMA の形）を **{out_file} へ書く**
+  - 終了コード 0 が成功
 
 安全側の決めごと（§10「実行設定」）:
   - 作業ディレクトリは Vault 実パスに固定する
@@ -22,6 +28,7 @@ import logging
 import os
 from pathlib import Path
 import shlex
+import shutil
 import tempfile
 
 logger = logging.getLogger("uvicorn.error")
@@ -37,6 +44,13 @@ DEFAULT_CODEX_CMD = (
     "--output-schema {schema_file} --output-last-message {out_file} "
     "--skip-git-repo-check"
 )
+
+# {sandbox} に入れる値。codex は --sandbox の引数だが、他の CLI では別の
+# フラグになる（Claude Code なら --allowedTools / --permission-mode）。
+# コード側に残っていた唯一の codex 固有部分なので .env から差し替えられるようにする。
+# §2「アダプター層は差し替え可能に保つ」
+DEFAULT_SANDBOX_READ = "read-only"
+DEFAULT_SANDBOX_WRITE = "workspace-write"
 DEFAULT_TIMEOUT = 120          # §10「通常 120 秒」
 
 SCHEMA = {
@@ -57,14 +71,25 @@ class AgentResult:
     summary: str
     spoken_reply: str
     sources: list[str] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=list)
+    diff: str = ""
+    proposed_root: Path | None = None
+    original_contents: dict[str, bytes | None] = field(default_factory=dict)
     error: str | None = None
 
 
 def build_prompt(text: str, mode: str) -> str:
     """§10「プロンプト組み立て」の5点を必ず入れる。"""
+    # propose_write の作業ディレクトリは Vault そのものではなく使い捨てのコピー
+    # （§11「エージェントには一時作業領域で変更させ、承認後に Vault へ適用する」）。
+    # ここで「変更しないで」と言うと編集が起きず、差分が空になって承認画面が
+    # 出ない。コピーを編集することが提案そのものだと明示する
     rule = ("**このセッションは読み取り専用です。ファイルを一切変更しないでください。**"
             if mode == "read_only" else
-            "変更は提案にとどめ、勝手に確定しないでください。")
+            "**この作業ディレクトリは Vault の使い捨てコピーです。"
+            "必要な変更はここのファイルに実際に書いてください。**\n"
+            "書いた内容は本人が差分を見て承認するまで本物の Vault には入りません。"
+            "変更は依頼された1件だけにとどめ、ついでの整理をしないでください。")
     return f"""あなたはこの Obsidian Vault を根拠に答える秘書です。
 
 まず `_kit/AI_RULES.md` を読み、その規則に従ってください。
@@ -77,6 +102,9 @@ def build_prompt(text: str, mode: str) -> str:
 
 出典が言えないことは書かないでください。分からなければ分からないと答えてください。
 読み上げ用の返事は80文字程度までにしてください。
+
+最終メッセージは次のJSONだけを返してください。前後に説明やコードフェンスを付けないでください。
+{{"summary":"画面用の要約(日本語)","spoken_reply":"読み上げ用(日本語80文字程度)","sources":["根拠にしたVault内のファイルパス"]}}
 """
 
 
@@ -85,7 +113,10 @@ class CodexAgent:
 
     def __init__(self, vault: Path, command: str | None = None, timeout: int = DEFAULT_TIMEOUT) -> None:
         self.vault = vault
-        self.command = command or os.getenv("CODEX_CMD") or DEFAULT_CODEX_CMD
+        # AGENT_CMD が新しい名前。CODEX_CMD は既存の .env をそのまま動かすため残す
+        self.command = command or os.getenv("AGENT_CMD") or os.getenv("CODEX_CMD") or DEFAULT_CODEX_CMD
+        self.sandbox_read = os.getenv("AGENT_SANDBOX_READ") or DEFAULT_SANDBOX_READ
+        self.sandbox_write = os.getenv("AGENT_SANDBOX_WRITE") or DEFAULT_SANDBOX_WRITE
         self.timeout = timeout
         self._lock = asyncio.Lock()
 
@@ -102,9 +133,23 @@ class CodexAgent:
         prompt_file.write_text(build_prompt(text, mode), encoding="utf-8")
         schema_file.write_text(json.dumps(SCHEMA), encoding="utf-8")
 
+        # Phase 4: proposal runs must never receive the real Vault as a writable
+        # directory.  Copy it before invoking Codex, then keep that copy until
+        # the user has approved or rejected the resulting diff.
+        proposed_root: Path | None = None
+        cwd = self.vault
+        if mode == "propose_write":
+            proposed_root = work / "vault"
+            try:
+                shutil.copytree(self.vault, proposed_root, ignore=shutil.ignore_patterns(".git"))
+            except OSError as exc:
+                shutil.rmtree(work, ignore_errors=True)
+                return AgentResult("", "", error=f"AGENT_FAILED: proposal copy ({exc})")
+            cwd = proposed_root
+
         command = self.command.format(
-            sandbox="read-only" if mode == "read_only" else "workspace-write",
-            cwd=shlex.quote(str(self.vault)),
+            sandbox=self.sandbox_read if mode == "read_only" else self.sandbox_write,
+            cwd=shlex.quote(str(cwd)),
             prompt_file=shlex.quote(str(prompt_file)),
             schema_file=shlex.quote(str(schema_file)),
             out_file=shlex.quote(str(out_file)),
@@ -122,32 +167,131 @@ class CodexAgent:
                 process.kill()
                 await process.wait()
                 # §17 AGENT_TIMEOUT「ジョブを中止し、変更を破棄して報告」
+                shutil.rmtree(work, ignore_errors=True)
+                proposed_root = None
                 return AgentResult("", "", error=f"AGENT_TIMEOUT ({self.timeout}s)")
 
             if process.returncode != 0:
                 tail = (stderr or b"").decode("utf-8", "ignore").strip().splitlines()[-3:]
+                shutil.rmtree(work, ignore_errors=True)
+                proposed_root = None
                 return AgentResult("", "", error="AGENT_FAILED: " + " / ".join(tail))
 
-            return self._parse(out_file)
+            outcome = self._parse(out_file)
+            if proposed_root is not None:
+                if outcome.error:
+                    # 答えが読めないまま提案コピーを残すと、承認に出せないまま
+                    # temp に Vault 1個ぶんが積まれ続ける
+                    shutil.rmtree(work, ignore_errors=True)
+                    return outcome
+                outcome.proposed_root = proposed_root
+                outcome.changed_files, outcome.diff = _changes(self.vault, proposed_root)
+                outcome.original_contents = {
+                    relative: (self.vault / relative).read_bytes() if (self.vault / relative).is_file() else None
+                    for relative in outcome.changed_files
+                }
+                if not outcome.changed_files:
+                    outcome.proposed_root = None
+                    shutil.rmtree(work, ignore_errors=True)
+            return outcome
         except OSError as exc:
+            shutil.rmtree(work, ignore_errors=True)
+            proposed_root = None
             return AgentResult("", "", error=f"AGENT_FAILED: {exc}")
         finally:
             for path in (prompt_file, schema_file, out_file):
                 try: path.unlink()
                 except OSError: pass
-            try: work.rmdir()
-            except OSError: pass
+            # A proposed Vault copy is retained for the approval endpoint.  All
+            # other runs remove their complete temporary directory immediately.
+            if proposed_root is None:
+                shutil.rmtree(work, ignore_errors=True)
 
     @staticmethod
     def _parse(out_file: Path) -> AgentResult:
         """返ってきた JSON を読む。読めなければ黙って空を返さず、理由を残す。"""
         try:
-            payload = json.loads(out_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            raw = out_file.read_text(encoding="utf-8")
+        except OSError as exc:
             return AgentResult("", "", error=f"AGENT_FAILED: unreadable answer ({exc})")
+        payload = _json_object(raw)
+        if payload is None:
+            head = " ".join(raw.split())[:80]
+            return AgentResult("", "", error=f"AGENT_FAILED: unreadable answer ({head!r})")
         summary = str(payload.get("summary", "")).strip()
         spoken = str(payload.get("spoken_reply", "")).strip()
         sources = [str(s) for s in payload.get("sources", []) if isinstance(s, str)]
         if not spoken and not summary:
             return AgentResult("", "", error="AGENT_FAILED: empty answer")
         return AgentResult(summary=summary or spoken, spoken_reply=spoken or summary, sources=sources)
+
+
+def _json_object(raw: str) -> dict | None:
+    """本文から答えの JSON を取り出す。
+
+    「JSONだけ返して」と指示してもコードフェンスや一言が前後に付くことがある。
+    形が合っているのに1文字の余分で提案ごと捨てるのは損なので、素で読めなければ
+    最初の `{` から釣り合う `}` までを取り出して読み直す。
+    `--output-schema` を持たない CLI（Claude Code）では特に起きやすい。
+    """
+    for candidate in (raw, _first_object(raw)):
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _first_object(raw: str) -> str | None:
+    """最初の `{` から、括弧の釣り合う `}` までを返す。文字列内の括弧は数えない。"""
+    start = raw.find("{")
+    if start < 0:
+        return None
+    depth, in_string, escaped = 0, False, False
+    for index in range(start, len(raw)):
+        char = raw[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return raw[start:index + 1]
+    return None
+
+
+def _changes(original: Path, proposed: Path) -> tuple[list[str], str]:
+    """Return an approval diff; deletions and paths outside the copy are rejected later."""
+    import difflib
+
+    paths = {
+        path.relative_to(original).as_posix()
+        for path in original.rglob("*") if path.is_file() and ".git" not in path.parts
+    } | {
+        path.relative_to(proposed).as_posix()
+        for path in proposed.rglob("*") if path.is_file()
+    }
+    changed: list[str] = []
+    chunks: list[str] = []
+    for relative in sorted(paths):
+        before, after = original / relative, proposed / relative
+        old = before.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True) if before.is_file() else []
+        new = after.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True) if after.is_file() else []
+        if old == new:
+            continue
+        changed.append(relative)
+        chunks.extend(difflib.unified_diff(old, new, fromfile=f"a/{relative}", tofile=f"b/{relative}"))
+    return changed, "".join(chunks)
