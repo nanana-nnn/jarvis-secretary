@@ -1,6 +1,6 @@
-# JARVIS Secretary — Phase 0/1
+# JARVIS Secretary — Phase 0–4
 
-HTTPS/WSS connection, installable iPhone PWA, finite-state UI, and local double-clap detection. Audio upload, speech recognition, Vault access, and agents are intentionally not implemented.
+HTTPS/WSS connection, installable iPhone PWA, finite-state UI, local clap detection, audio upload with speech recognition, read-only Vault access, and approval-gated writes via Codex/Claude Code adapters are implemented. Phase 5 (always-on hardening: OLED care, auto-restart, outage recovery) is not yet started.
 
 ## Setup
 
@@ -83,4 +83,4 @@ npm test
 npm run build
 ```
 
-The Phase 0 restart/Wi-Fi recovery test and Phase 1 clap accuracy/overnight test require the target iPhone and room, so use `docs/phase-0-1-acceptance.md`.
+The Phase 0 restart/Wi-Fi recovery test and Phase 1 clap accuracy/overnight test require the target iPhone and room, so use `docs/phase-0-1-acceptance.md`. Phase 4 (approval-gated writes: reject / approve / 120s auto-reject) passed on-device on 2026-09-01.
