@@ -20,7 +20,12 @@
   font-synthesis: none; -webkit-text-size-adjust: 100%;
 }
 * { box-sizing: border-box }
+/* overflow:hidden だけでは iOS standalone のスクロール位置ずれを防ぎきれない
+   （権限ダイアログ後などに visualViewport がずれ、ページが下にスクロールされた
+   状態で固定されてしまう。手で上へスワイプすると直るのがその証拠）。
+   position:fixed で body 自体をスクロール不能な要素にする（2026-09-02 実機で確認）*/
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--scheme-bg) }
+body { position: fixed; inset: 0; }
 /* PC と同じ壁紙を敷く。届くまでは配色の背景色のまま */
 body { background-image: var(--wallpaper); background-size: cover; background-position: center }
 /* iOS Safari は position:fixed / 100vh に「大きい方」のビューポートを使うので、
@@ -36,15 +41,21 @@ body { background-image: var(--wallpaper); background-size: cover; background-po
 button { font: inherit; color: inherit }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
 
-/* sysmon の右列と同じ3段。上から fetch / dots / 状態（時計の代わり）。
-   3枚を等分にする（本人の判断、2026-09-01）。以前は fetch/live を中身なりの
-   高さにして余りを core だけへ渡していたが、fetch から user/distro を
-   外して行数が減ったのを機に、3枚を同じ高さのカードとして揃える方針へ変えた。
-   1fr を3つ並べるだけ。各段の中身は縦方向にも中央寄せにして、余った分を
-   段の外ではなく中身の周りへ配る（.fetch/.live の align-content: center、
-   .core-stage は canvas が面いっぱいに追従する） */
+/* sysmon の右列と同じ3段。上から fetch / dots / 状態（時計の代わり）*/
+/* 各段は中身の高さで決まり、余りは段の間へ配す（sysmon の3枚と同じ間合いにする）。
+   1fr にすると2段目だけ間延びして、ドットの上下に大きな空きができる */
+/* 3段目は中身なりの高さにして、余り(と不足)は2段目に持たせる。
+   2段目は minmax(0,1fr) なので min-height が 0 まで潰れ、画面が短い端末でも
+   3段目を押し出さない（Safari のツールバーぶんで実際に溢れていた）。
+   max-height は付けない。余った高さは全部2段目のコアが受ける方針
+   （2026-09-01 決定。実測で Safari 142px / ホーム画面PWA 214px と差は出るが、
+   PWA は画面が 145px 高いぶんなので想定どおり）。
+   3枚を等分にする案（1fr 1fr 1fr）を2026-09-01に一度試したが、各段の
+   最小高さが real device の dvh を超えて溢れ、ホーム画面PWAで上に隙間・
+   下が見切れる形で現れた（実機未検証のままコミットしていたのが原因）。
+   auto 方式へ戻す（2026-09-02、同じ症状が2回出たので再度戻した） */
 .shell {
-  position: relative; width: 100%; height: 100%; display: grid; grid-template-rows: 1fr 1fr 1fr auto;
+  position: relative; width: 100%; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 10px;
   padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0px max(12px, env(safe-area-inset-left));
   background: transparent; overflow: hidden;
@@ -161,11 +172,8 @@ button { font: inherit; color: inherit }
 }
 
 /* 1段目: fastfetch。ロゴも枠も37桁なので、37桁が画面幅に収まる字送りで頭打ちにする
-   （37 * 0.6em * 15px = 333px < 366px）。
-   grid の 1fr は既定で「中身より縮まない」ので、余白を詰めて中身の最小高さを
-   他の2段（core/live、実測244px）以下に収める。詰めないと fetch だけ膨らんで
-   3等分にならない（2026-09-01 実測：詰める前は279pxで35px超過していた）*/
-.fetch { display: grid; justify-items: center; align-content: center; gap: 4px; padding: 8px 6px; font-size: clamp(8px, 3.9vw, 16px); line-height: 1.24; white-space: pre }
+   （37 * 0.6em * 15px = 333px < 366px）*/
+.fetch { display: grid; justify-items: center; gap: 7px; padding: 14px 6px; font-size: clamp(8px, 3.9vw, 16px); line-height: 1.34; white-space: pre }
 /* pre は UA 既定の font-family: monospace が継承より強いので、明示的に当て直す。
    忘れると枠線だけ別フォントに落ちて送りが2倍になり、桁が崩れる */
 .fetch-logo, .fetch-box { margin: 0; font-family: var(--mono); font-size: inherit; line-height: inherit }
@@ -189,7 +197,7 @@ button { font: inherit; color: inherit }
 /* SNS に上げた小さい画像でも読めるよう、大きめのアイコン＋名前で1組にする */
 .live .dots { display: flex; gap: clamp(10px, 4vw, 20px); margin-top: 8px }
 .dot { display: grid; justify-items: center; gap: 3px; color: var(--scheme-outline); opacity: .4; transition: color .3s ease, opacity .3s ease }
-.dot i { font-style: normal; font-size: clamp(36px, 12.6vw, 57px); line-height: 1 }  /* 1.5倍（本人の指定） */
+.dot i { font-style: normal; font-size: clamp(24px, 8.4vw, 38px); line-height: 1 }
 .dot b { font-weight: 500; font-size: clamp(7px, 2.5vw, 11px); letter-spacing: .04em }
 /* off = 居ない / alive = 居る / busy = CPUが伸びている＝処理中 */
 .dot.alive { color: var(--scheme-muted); opacity: 1 }
