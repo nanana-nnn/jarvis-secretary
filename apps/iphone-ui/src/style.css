@@ -131,6 +131,19 @@ button { font: inherit; color: inherit }
 .amb-sleep .amb-blob { opacity: .05 !important; animation: none !important; filter: blur(90px) !important; transition: opacity .4s ease }
 .amb-sleep .amb-blob-b { animation-duration: 14s; animation-delay: -3s }
 
+/* OLED保護：待機中は同じ画素を焼き続けないよう、数px範囲でごくゆっくり位置を
+   ずらす（DESIGN.md §15「待機時は輝度を大きく下げ、数ピクセル単位のゆっくり
+   した位置移動を入れる」）。減光だけだと文字の形は同じ位置に出続けるため、
+   輝度と位置の両方を動かす。3px以内・120秒周期で気づかれない速さにする */
+@keyframes oled-drift {
+  0%   { transform: translate(0, 0) }
+  25%  { transform: translate(2px, -1px) }
+  50%  { transform: translate(0, -3px) }
+  75%  { transform: translate(-2px, -1px) }
+  100% { transform: translate(0, 0) }
+}
+.shell.state-sleep { animation: oled-drift 120s ease-in-out infinite }
+
 /* 起動: 減光を外し、縁と全面を一気に焚く */
 .scrim-waking { opacity: 0; transition-duration: .2s }
 .amb-waking .amb-ring { animation: amb-spin 1.1s linear, amb-ring-burst 1.1s ease-out both }
