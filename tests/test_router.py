@@ -222,9 +222,10 @@ def test_missing_daily_still_answers_with_open_tasks(tmp_path: Path) -> None:
 
 
 def test_clap_fixed_question_always_goes_through_codex() -> None:
-    """拍手で送る固定質問（なにする？）は、先読みキャッシュへ即座に乗せず
-    毎回 Codex を実際に起動して Vault を読ませる（2026-09-02、本人の指定）。
-    一度は逆に「先読みへ即答させるべき」と直したが、本人はそれを望んでいなかった。"""
-    result = route("なにする？")
+    """拍手で実際に送る固定質問は「タスク教えて」（画面に見せる「なにする？」とは別。
+    2026-09-02、本人の指定）。先読みキャッシュへ即座に乗せず、毎回 Codex を実際に
+    起動して Vault を読ませる。一度は逆に「先読みへ即答させるべき」と直したが、
+    本人はそれを望んでいなかった。"""
+    result = route("タスク教えて")
     assert result.intent == "ASK"
     assert result.direct is None

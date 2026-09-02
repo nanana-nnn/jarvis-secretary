@@ -12,8 +12,8 @@
 ## 作り直すとき
 
 ```fish
-set UNI "U+0020-007E,U+00A0,U+2500,U+2502,U+256D,U+256E,U+256F,U+2570,U+2022,U+25CF,U+2026,U+2588,U+2580,U+2584"
-set ICONS "U+F473,U+E385,U+F489,U+EFC5,U+F487,U+F007,U+F108,U+F0EC0"
+set UNI "U+0020-007E,U+00A0,U+2500,U+2502,U+256D,U+256E,U+256F,U+2570,U+2022,U+25CF,U+2026,U+2588,U+2580,U+2584,U+25B6"
+set ICONS "U+F473,U+E385,U+F489,U+EFC5,U+F487,U+F007,U+F108,U+F0EC0,U+F0AA2"
 pyftsubset /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Regular.ttf \
   --unicodes="$UNI,$ICONS" --layout-features= --no-hinting --desubroutinize \
   --flavor=woff2 --output-file=jbmono-nerd-regular.woff2
@@ -22,6 +22,10 @@ pyftsubset /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Regular.ttf \
 アイコンのコードポイントは推測せず、出どころから取る。
 - fetch(1段目)の8字 … `~/.config/fastfetch/config.jsonc` の key に埋まっている
 - live(3段目)の7字 … **必ず一度描いて字を目で確かめてから入れる**
+- `U+F0AA2`（`󰪢`）… 文字回答カードのプロンプト行。`~/.config/starship.toml` の
+  `[cmd_duration]` と同じ字（2026-09-02追加）
+- `U+25B6`（▶）… 同じくプロンプト行の矢印。フォールバックフォントでも表示は
+  できていたが、字送りを他の字と揃えるため本体へ入れた
 
 2026-08-31、記憶で書いたら md-brain のつもりが再生ボタン、sparkle のつもりが
 車になった。候補を並べて描いた画像で確認してから決めること。

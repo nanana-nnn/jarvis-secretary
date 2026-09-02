@@ -131,9 +131,9 @@ export default function App() {
 
   // 文字回答カードの操作。詳しくは components/AnswerCard.tsx
   const openQaSession = (question: string, phase: QAPhase) =>
-    setQa([{ id: ++qaIdRef.current, question, lines: [], phase }]);
+    setQa([{ id: ++qaIdRef.current, question, lines: [], phase, startedAt: Date.now() }]);
   const appendQaExchange = (question: string, phase: QAPhase) =>
-    setQa(prev => [...prev, { id: ++qaIdRef.current, question, lines: [], phase }]);
+    setQa(prev => [...prev, { id: ++qaIdRef.current, question, lines: [], phase, startedAt: Date.now() }]);
   const updateLastQa = (patch: Partial<QAExchange>) =>
     setQa(prev => {
       if (!prev.length) return prev;
@@ -156,13 +156,15 @@ export default function App() {
     // 起こすのは待機中だけ。会話中の物音で状態を飛ばさない
     () => {
       if (stateRef.current !== "SLEEP") return;
-      // 拍手を会話開始の固定入力としてPCへ送る。マイクで「なに？」を
-      // 聞き直す必要がなく、Codexへ即時に渡せる。
-      // カードは LISTENING → 質問 の順で見せる（2026-09-02、本人の指定）。
-      // agent.started が届いた時点で thinking へ切り替わる
-      const question = "なにする？";
-      socketRef.current?.send({ type: "text.input", text: question });
-      openQaSession(question, "listening");
+      // 拍手を会話開始の固定入力としてPCへ送る。マイクで聞き直す必要がなく、
+      // Codexへ即時に渡せる。「なにする？」は下のカード（Live キャプション）に
+      // 出す表示専用の一言（WAKING の effect で設定）で、実際に Codex へ送る文
+      // とは分ける（2026-09-02、本人の指定：JARVIS は最初に別の一言を
+      // 言うかもしれないので、表示文言と実クエリを固定で結び付けない）。
+      // 上の文字回答カードには実際に投げた文をそのまま出す（何を聞いたか分かるように）
+      const query = "タスク教えて";
+      socketRef.current?.send({ type: "text.input", text: query });
+      openQaSession(query, "listening");
       send("CLAP_DETECTED");
     },
     next => {
@@ -426,7 +428,10 @@ export default function App() {
     // 再描画のたびに再実行されても、起動ごとに一度だけ実行する
     if (state === "WAKING" && !wakeStartedRef.current) {
       wakeStartedRef.current = true;
-      setCaption("");
+      // 「なにする？」は下のカード（Live のキャプション）に出す表示専用の文言。
+      // 実際に Codex へ送る文とは分ける（本人の指定：JARVIS は最初に
+      // 別の一言を言うかもしれないので、表示と実クエリを固定で結び付けない）
+      setCaption("なにする？");
       setSpeaking(false);
       setHeardNothingAt(0);
       const id = setTimeout(() => send("WAKE_FINISHED"), WAKE_ANIM_MS);
@@ -511,7 +516,8 @@ export default function App() {
   return <main className={`shell state-${view.toLowerCase()}`}>
     <Ambience state={view} />
     {qa.length
-      ? <AnswerCard exchanges={qa} onBack={closeQa} onContinue={continueQa} />
+      ? <AnswerCard exchanges={qa} onBack={closeQa} onContinue={continueQa}
+          obsidianActive={Boolean(live.apps.obsidian?.alive)} />
       : <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} />}
 
     <section className="core-stage panel">

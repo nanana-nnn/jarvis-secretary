@@ -197,33 +197,56 @@ button { font: inherit; color: inherit }
    音声読み上げの代わり。質問中だけ .fetch を this に差し替える。
    高さは 1fr のグリッド段そのまま（他の2段と同じ枠）で固定にする。
    出力中に伸び縮みしないのは中を .qa-scroll で内部スクロールにしているため */
-.qa-card { display: flex; flex-direction: column; padding: 10px 12px; height: 100%;
-  font-size: clamp(9px, 3.4vw, 14px); line-height: 1.6; text-align: left; transition: box-shadow 1.2s ease; }
+.qa-card { position: relative; display: flex; flex-direction: column; padding: 10px 12px; height: 100%;
+  font-size: clamp(9px, 3.4vw, 14px); line-height: 1.6; text-align: left;
+  --qa-glow: var(--scheme-primary); }
+/* Obsidian の実プロセスが動いているあいだは紫にする（本人の指定）。
+   点灯はすべて実測（live.apps.obsidian.alive）で、飾りで紫にしない */
+.qa-obsidian { --qa-glow: #9b6bff; }
 .qa-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch }
 .qa-exchange + .qa-exchange { margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
-/* LISTENING 中は質問の1行上に状態を出す（2026-09-02、本人の指定：
-   「なにする？」はLISTENの下に）。agent.started が届くと消える */
-.qa-status { margin: 0 0 2px; color: var(--scheme-outline); font-size: .85em; letter-spacing: .12em }
+
+/* 本人の ~/.config/starship.toml と同じ2行構成（2026-09-02、本人の指定）。
+   1行目: cmd_duration（黄バッジ）directory（~ ＋ シアンバッジ）
+   2行目: character（青の • ＋ 白の ▶）+ 質問文
+   Powerline の三角/半円グリフでバッジ形にする代わりに、CSSのborder-radiusで
+   同じ「角丸バッジ」の見た目を作る（ターミナルでは角丸ができないための
+   工夫であって、ここでは要らない） */
+.qa-meta { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: .82em }
+.qa-duration, .qa-dir b {
+  display: inline-flex; align-items: center; gap: .3em; padding: 1px 7px; border-radius: 5px;
+  font-weight: 700;
+}
+.qa-duration { background: #f1c21b; color: #14171a }
+.qa-dir { color: var(--scheme-text); font-weight: 700 }
+.qa-dir b { background: #1fb6c9; margin-left: 4px }
+.qa-sep { color: #4e9eff; font-weight: 700 }
 /* Starship 風の丸いバッジ。プロンプト行の頭に置く */
-.qa-badge { color: var(--scheme-primary) }
+.qa-badge { color: var(--scheme-text); font-weight: 700 }
 .qa-prompt { margin: 0 0 4px; color: var(--scheme-text); font-weight: 700; overflow-wrap: anywhere }
 .qa-line { margin: 2px 0; color: var(--scheme-muted); white-space: pre-wrap; overflow-wrap: anywhere }
 .qa-cursor { color: var(--scheme-primary); animation: qa-blink 1s steps(2, start) infinite }
 @keyframes qa-blink { 50% { opacity: 0 } }
 
 /* 聞き取り開始〜回答表示完了は、縁・背景・外側のぼかしを壁紙テーマ色で
-   約2.5秒周期に明暗させる（回転する縁は使わない。§7の amb-ring とは別物）*/
-.qa-active {
-  animation: qa-breathe 2.5s ease-in-out infinite;
-  border: 1px solid var(--scheme-primary);
+   約2.5秒周期に明暗させる（回転する縁は使わない。§7の amb-ring とは別物）。
+   box-shadow を .qa-card 自身に置くと、.panel の backdrop-filter と重なって
+   実機で光がほぼ見えなかった（2026-09-02）。::before を専用の発光層にして
+   .qa-card の背面へ独立して置く方式へ変更。色は --qa-glow（既定は
+   --scheme-primary、Obsidian接続中は紫）を使う */
+.qa-active::before, .qa-idle::before {
+  content: ""; position: absolute; inset: -4px; z-index: -1;
+  border-radius: 22px; pointer-events: none;
 }
+.qa-active { border: 1px solid var(--qa-glow) }
+.qa-active::before { animation: qa-breathe 2.5s ease-in-out infinite }
 @keyframes qa-breathe {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--scheme-primary) 0%, transparent), inset 0 0 24px color-mix(in srgb, var(--scheme-primary) 6%, transparent) }
-  50%      { box-shadow: 0 0 22px 2px color-mix(in srgb, var(--scheme-primary) 45%, transparent), inset 0 0 24px color-mix(in srgb, var(--scheme-primary) 16%, transparent) }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--qa-glow) 0%, transparent) }
+  50%      { box-shadow: 0 0 26px 6px color-mix(in srgb, var(--qa-glow) 55%, transparent) }
 }
 /* 完了：呼吸を止め、弱い常時発光へ落ち着かせる */
-.qa-idle { border: 1px solid color-mix(in srgb, var(--scheme-primary) 35%, transparent);
-  box-shadow: 0 0 12px 0 color-mix(in srgb, var(--scheme-primary) 18%, transparent); }
+.qa-idle { border: 1px solid color-mix(in srgb, var(--qa-glow) 35%, transparent) }
+.qa-idle::before { box-shadow: 0 0 16px 3px color-mix(in srgb, var(--qa-glow) 30%, transparent) }
 
 .qa-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
