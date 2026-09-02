@@ -72,7 +72,7 @@ def answer_today(vault: Path, today: date) -> Answer | None:
     if not path.is_file():
         # AI_RULES「その日のデイリーが無い → 勝手に作らず、無いことを伝える」
         # ただし「無い」で終わらせず、続いている仕事のほうを答える
-        return _from_open_tasks(vault, f"{today.isoformat()} のデイリーはまだありません。")
+        return _from_open_tasks(vault, f"{today.isoformat()} のデイリーはまだないよ。")
     try:
         sections = _sections(path.read_text(encoding="utf-8"))
     except OSError:
@@ -86,7 +86,7 @@ def answer_today(vault: Path, today: date) -> Answer | None:
             lines.append(f"{name}: " + " / ".join(items))
 
     if not lines:
-        return _from_open_tasks(vault, "今日のデイリーはまだ空です。", extra_source=source)
+        return _from_open_tasks(vault, "今日のデイリーはまだ空だよ。", extra_source=source)
 
     spoken = lines[0]
     return Answer(
@@ -110,9 +110,35 @@ def answer_projects(vault: Path) -> Answer | None:
     names = [re.sub(r"^\**\[\[(.+?)\]\].*$", r"\1", i).split(" — ")[0].strip("* ") for i in items]
     return Answer(
         summary="続いているもの:\n" + "\n".join(f"・{i}" for i in items),
-        spoken_reply=_shorten("続いているのは、" + "、".join(names[:4]) + "です。"),
+        spoken_reply=_shorten("続いてるのは、" + "、".join(names[:4]) + "だよ。"),
         sources=["00_home/home.md"],
     )
+
+
+def answer_tasks(vault: Path, limit: int = 3) -> Answer:
+    """進行中プロジェクの未完了から、今日の候補を最大3件返す。
+
+    「今日の記録」と混ぜない。最近更新したプロジェクを優先し、
+    同じプロジェク内はノートに書かれた順を保つ。
+    """
+    tasks = open_tasks(vault)
+    if not tasks:
+        return Answer("進行中の未完了タスクはないよ。", "進行中の未完了タスクはないよ。", [])
+
+    def modified(task: OpenTask) -> float:
+        try:
+            return (vault / "02_projects" / f"{task.project}.md").stat().st_mtime
+        except OSError:
+            return 0
+
+    ranked = sorted(enumerate(tasks), key=lambda pair: (-modified(pair[1]), pair[0]))
+    chosen = [task for _, task in ranked[:limit]]
+    summary = f"今日のタスク候補は{len(chosen)}つあるよ。\n" + "\n".join(
+        f"{number}. [{task.project}] {task.text}" for number, task in enumerate(chosen, 1))
+    spoken = f"今日のタスク候補は{len(chosen)}つあるよ。" + "、".join(
+        f"{number}つ目、{task.text}" for number, task in enumerate(chosen, 1))
+    return Answer(summary, _shorten(spoken), list(dict.fromkeys(
+        f"02_projects/{task.project}.md" for task in chosen)))
 
 
 def _from_open_tasks(vault: Path, preface: str, extra_source: str | None = None) -> Answer:
@@ -134,8 +160,8 @@ def _from_open_tasks(vault: Path, preface: str, extra_source: str | None = None)
         "\n".join(f"・[{t.project}] {t.text}" for t in head)
     if len(tasks) > len(head):
         summary += f"\n…ほか{len(tasks) - len(head)}件"
-    spoken = _shorten(preface + f"進行中の未完了が{len(tasks)}件あります。"
-                      + "、".join(projects[:3]) + "などです。")
+    spoken = _shorten(preface + f"進行中の未完了が{len(tasks)}件あるよ。"
+                      + "、".join(projects[:3]) + "などだよ。")
     sources = [f"02_projects/{name}.md" for name in projects]
     if extra_source:
         sources.insert(0, extra_source)
@@ -197,6 +223,8 @@ def _shorten(text: str, limit: int = 80) -> str:
 def answer(vault: Path, topic: str, today: date | None = None) -> Answer | None:
     """topic に応じて直接答える。扱えない topic は None（Codex へ回す）。"""
     day = today or date.today()
+    if topic == "tasks":
+        return answer_tasks(vault)
     if topic == "today":
         return answer_today(vault, day)
     if topic == "projects":

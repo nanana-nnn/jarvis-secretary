@@ -16,7 +16,7 @@ Intent = Literal["SYSTEM", "CAPTURE", "EXECUTE", "DECIDE", "ASK"]
 Mode = Literal["read_only", "propose_write"]
 
 # 直接答えられる問い。ここに当たれば Codex を起動しない
-DirectTopic = Literal["today", "recent", "projects", "status", "vault"]
+DirectTopic = Literal["tasks", "today", "recent", "projects", "status", "vault"]
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,8 @@ RULES: list[tuple[Intent, Mode, tuple[str, ...]]] = [
 # 直接答える問い。ASK のうち、決まった読み方で足りるもの。
 # 長い言い回しから先に見る（「今日の予定」より先に「今日のタスク」を当てる）
 DIRECT: list[tuple[DirectTopic, tuple[str, ...]]] = [
-    ("today",    ("今日のタスク", "今日の予定", "今日やること", "今日の記録", "今日のデイリー", "今日は何")),
+    ("tasks",    ("今日のタスク", "今日の予定", "今日やること", "今日は何")),
+    ("today",    ("今日の記録", "今日のデイリー")),
     ("recent",   ("最近", "この前", "昨日", "直近")),
     ("projects", ("プロジェクト", "進行中", "続いているもの", "案件")),
     ("status",   ("状態", "進捗", "どこまで", "どうなってる")),

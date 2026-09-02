@@ -380,7 +380,7 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             if not approve:
                 operation_log({"intent": job["intent"], "text": job["text"], "changed_files": job["changed_files"],
                                "approved": False, "reason": "rejected"})
-                return {"job_id": job_id, "applied": False, "summary": "変更を破棄しました。", "spoken_reply": "変更を破棄しました。"}
+                return {"job_id": job_id, "applied": False, "summary": "変更を破棄したよ。", "spoken_reply": "変更を破棄したよ。"}
             originals = job["original_contents"]
             assert isinstance(originals, dict)
             for relative, original in originals.items():
@@ -420,8 +420,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         with suppress(Exception):
             await socket.send_json({
                 "type": "agent.completed", "intent": job["intent"], "job_id": job_id, "applied": False,
-                "summary": "確認がなかったので変更を破棄しました。",
-                "spoken_reply": "確認がなかったので変更を破棄しました。",
+                "summary": "確認がなかったから変更を破棄したよ。",
+                "spoken_reply": "確認がなかったから変更を破棄したよ。",
                 "sources": [], "took": 0, "ts": timestamp_ms(),
             })
 
@@ -536,6 +536,14 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             await socket.close(code=1008, reason="origin not allowed")
             return
         await socket.accept()
+        # 常設端末は1画面だけを音声入力元にする。古いPWAタブが残ると、
+        # 同じ手拍子に複数インスタンスが反応して起動声や録音が重なる。
+        for previous in tuple(clients):
+            if previous is socket:
+                continue
+            with suppress(RuntimeError, WebSocketDisconnect):
+                await previous.close(code=4000, reason="new active client")
+            clients.discard(previous)
         clients.add(socket)
 
         async def emit(payload: dict) -> bool:
@@ -611,9 +619,16 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             if decision.direct:
                 # 「今日のタスク」は先読みしてある。あればそれを返す（0秒）。
                 # 無ければ下の機械読みへ落ちる。**どちらでも必ず答えは返る**
-                if decision.direct == "today":
+                if decision.direct == "tasks":
                     ready = briefing.answer()
                     if ready is not None:
+                        # UI は audio.final で TRANSCRIBING へ入り、agent.started を
+                        # 受けて初めて agent.completed を受けられる（§6）。
+                        # 即答でもこの遷移を飛ばすと実機が TRANSCRIBING で止まる。
+                        await emit({
+                            "type": "agent.started", "intent": decision.intent,
+                            "matched": decision.matched, "long": False, "ts": timestamp_ms(),
+                        })
                         await emit({
                             "type": "agent.completed", "intent": decision.intent,
                             "summary": ready.summary, "spoken_reply": ready.spoken_reply,
@@ -622,6 +637,10 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                         return
                 found = vault_reader.answer(vault_path, decision.direct)
                 if found is not None:
+                    await emit({
+                        "type": "agent.started", "intent": decision.intent,
+                        "matched": decision.matched, "long": False, "ts": timestamp_ms(),
+                    })
                     await emit({
                         "type": "agent.completed", "intent": decision.intent,
                         "summary": found.summary, "spoken_reply": found.spoken_reply,
@@ -764,6 +783,11 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                             bool(message.get("accepted", False)),
                             str(message.get("reason", "unknown")),
                         )
+                    elif message.get("type") == "text.input":
+                        # 拍手など、端末が確定させた固定入力をPC側のCodexへ渡す
+                        value = message.get("text")
+                        if isinstance(value, str) and value.strip() and (job is None or job.done()):
+                            job = asyncio.create_task(respond(value.strip()))
                     elif message.get("type") == "mic.health":
                         # 実機のマイクが止まったときだけ届く。原因の切り分けに使う
                         logger.warning(
@@ -771,6 +795,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                             message.get("context"), message.get("track"),
                             message.get("muted"), message.get("revived"),
                         )
+                    elif message.get("type") in ("speech.started", "speech.ended", "speech.error"):
+                        logger.info("[TTS] %s detail=%s", message.get("type"), message.get("detail", ""))
                     elif message.get("type") == "session.sleep":
                         # 待機へ戻ったら、言いかけを持ち越さない
                         splitter.reset()

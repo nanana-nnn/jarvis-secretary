@@ -46,4 +46,10 @@ describe("行き止まりがないこと", () => {
     // Phase 2 はエージェントが無いので、読み上げ後はここを通るしかない
     expect(transition("TRANSCRIBING", "IDLE")).toBe("SLEEP");
   });
+
+  it("即答も TRANSCRIBING → THINKING → SPEAKING の順で進む", () => {
+    const thinking = transition("TRANSCRIBING", "AGENT_STARTED");
+    expect(thinking).toBe("THINKING");
+    expect(transition(thinking, "AGENT_COMPLETED")).toBe("SPEAKING");
+  });
 });

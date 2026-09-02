@@ -1,6 +1,9 @@
 import type { AudioMetrics, ClapLog, ClapSettings } from "./types";
 
-const ABSOLUTE_MIN_RMS = 0.0035;
+// 2026-09-02 実機: タイピングが rms 0.005〜0.016 / hf 0.41〜0.53 /
+// rise 0〜5ms で指パッチンと同じ条件を満たした。現在の指標だけでは
+// 周波数と立ち上がりで分けられないため、実測したキーボード上限より上を要求する。
+const ABSOLUTE_MIN_RMS = 0.020;
 
 export class ClapDetector {
   private noiseFloor = 0.002;

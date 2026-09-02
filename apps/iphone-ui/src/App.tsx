@@ -70,12 +70,12 @@ const copy: Record<SecretaryState, StateCopy> = {
   OFFLINE:      { en: "LINK OFFLINE",  code: "NET.91" },
 };
 
-// 手拍子の閾値は端末内に持つ。hfMin と mode は毎回上書きする
-// （2026-08-26 に指パッチン1回へ変更した値で、保存済みの古い設定に負けないようにするため）。
+// 手拍子の閾値は端末内に持つ。起動方式の確定値は毎回上書きし、
+// 保存済みの古いsingle設定に負けないようにする（2026-09-02、タイピング誤起動対策）。
 function loadClapSettings(): ClapSettings {
   try {
     const saved = JSON.parse(localStorage.getItem("clap-settings") || "{}");
-    return { ...DEFAULT_CLAP_SETTINGS, ...saved, hfMin: 0.2, mode: "single" };
+    return { ...DEFAULT_CLAP_SETTINGS, ...saved, hfMin: 0.2, gapMin: 250, gapMax: 800, mode: "double" };
   } catch {
     return { ...DEFAULT_CLAP_SETTINGS };
   }
@@ -105,6 +105,7 @@ export default function App() {
   const [caption, setCaption] = useState("");
   // サーバーが発話を検出した。話している間に待機へ戻さないための印
   const [speaking, setSpeaking] = useState(false);
+  const [introDone, setIntroDone] = useState(false);
   // 「聞き取れませんでした」を出した時刻。少し見せてから待機へ戻す
   const [heardNothingAt, setHeardNothingAt] = useState(0);
   // 読み上げる答え。聞き取った文ではなく、これを喋る
@@ -117,6 +118,7 @@ export default function App() {
   const wakeLock = useMemo(() => new ScreenWakeLock(), []);
 
   const socketRef = useRef<ReconnectingSocket | null>(null);
+  const wakeStartedRef = useRef(false);
   // 検出コールバックは再生成しない（依存配列が空）ので、最新の状態は ref 経由で見る
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -126,7 +128,15 @@ export default function App() {
   const detector = useMemo(() => new ClapDetector(
     settings,
     // 起こすのは待機中だけ。会話中の物音で状態を飛ばさない
-    () => { if (stateRef.current === "SLEEP") send("CLAP_DETECTED"); },
+    () => {
+      if (stateRef.current !== "SLEEP") return;
+      // 拍手を会話開始の固定入力としてPCへ送る。マイクで「なに？」を
+      // 聞き直す必要がなく、Codexへ即時に渡せる。
+      socketRef.current?.send({ type: "text.input", text: "なにしよう？" });
+      setCaption("なにしよう？");
+      send("CLAP_DETECTED");
+      window.setTimeout(() => send("AUDIO_FINAL"), WAKE_ANIM_MS + 20);
+    },
     next => {
       setLogs(next);
       const last = next.at(-1);
@@ -313,12 +323,12 @@ export default function App() {
   // 録音は LISTENING の間だけ。待機中に送り続けない
   useEffect(() => {
     if (mic !== "on") return;
-    if (state !== "LISTENING") { microphone.setRecording(false); return; }
+    if (state !== "LISTENING" || !introDone) { microphone.setRecording(false); return; }
     // 指パッチンの余韻が発話として書き起こされ、空振りして待機へ戻っていた
     // （2026-08-31 のログ: utterance 360ms → ''）。鳴らした音が消えてから録る
     const id = setTimeout(() => microphone.setRecording(true), SNAP_TAIL_MS);
     return () => { clearTimeout(id); microphone.setRecording(false); };
-  }, [microphone, mic, state]);
+  }, [microphone, mic, state, introDone]);
 
   // 画面ロックの見張り。OS の都合で解放されるので、外れていたら取り直す
   useEffect(() => {
@@ -353,20 +363,44 @@ export default function App() {
   }, [microphone, mic]);
 
   useEffect(() => {
-    if (state === "WAKING") {
+    // hello の再生終了で再描画されても、起動ごとに一度だけ実行する。
+    // introDone は前回の起動で true のまま残るため、state の境目は ref で管理する。
+    if (state === "WAKING" && !wakeStartedRef.current) {
+      wakeStartedRef.current = true;
       setCaption("");
       setReply("");
       setSpeaking(false);
       setHeardNothingAt(0);
-      const hello = new SpeechSynthesisUtterance("はい、どうしました？");
+      setIntroDone(false);
+      microphone.preparePlayback();
+      const hello = new SpeechSynthesisUtterance("なにしよう？");
       hello.lang = "ja-JP";
+      hello.volume = 1;
+      hello.rate = 1;
+      hello.onstart = () => socketRef.current?.send({ type: "speech.started", utterance: "wake" });
       // 読み上げが終わった直後に必ず起こし直す。iOS は再生で録音を止めることがある
-      hello.onend = () => { void microphone.ensureRunning(); };
-      speechSynthesis.speak(hello);
+      hello.onend = () => {
+        socketRef.current?.send({ type: "speech.ended", utterance: "wake" });
+        setIntroDone(true);
+        void microphone.ensureRunning();
+      };
+      hello.onerror = event => {
+        socketRef.current?.send({ type: "speech.error", utterance: "wake", detail: event.error || "unknown" });
+        setIntroDone(true);
+        void microphone.ensureRunning();
+      };
+      // iOSでonendが来ない場合もAWAKENINGを残さない。
+      const helloFallback = window.setTimeout(() => setIntroDone(true), 3000);
+      speechSynthesis.resume();
+      // iOSではaudioSession切替直後のspeakが無音になることがある。
+      // 直前cancelも行わず、再生経路が切り替わる猶予を置く。
+      const speakTimer = window.setTimeout(() => speechSynthesis.speak(hello), 180);
       const id = setTimeout(() => send("WAKE_FINISHED"), WAKE_ANIM_MS);
-      return () => clearTimeout(id);
+      return () => { clearTimeout(id); clearTimeout(helloFallback); clearTimeout(speakTimer); };
     }
+    if (state !== "WAKING") wakeStartedRef.current = false;
     if (state === "LISTENING") {
+      if (!introDone) return;
       // 話し始めていたら待機へ戻さない。言い終わるまで待つ
       // （終端は VAD が決める。長すぎる発話は §6 の 30秒で必ず切れる）
       if (speaking) return;
@@ -375,21 +409,69 @@ export default function App() {
     }
     // 答えが返ったら読み上げて待機へ戻る（§10 spoken_reply を喋る）
     if (state === "SPEAKING") {
+      if (!reply) {
+        setCaption("読み上げる答えが空です。");
+        const id = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
+        return () => clearTimeout(id);
+      }
       const utterance = new SpeechSynthesisUtterance(reply);
       utterance.lang = "ja-JP";
-      utterance.onend = () => { void microphone.ensureRunning(); };
+      utterance.rate = 1;
+      utterance.volume = 1;
+      let idleId: ReturnType<typeof setTimeout> | undefined;
+      utterance.onstart = () => socketRef.current?.send({ type: "speech.started" });
+      utterance.onend = () => {
+        socketRef.current?.send({ type: "speech.ended" });
+        void microphone.ensureRunning();
+        idleId = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
+      };
+      utterance.onerror = event => {
+        const detail = event.error || "unknown";
+        socketRef.current?.send({ type: "speech.error", detail });
+        setCaption(`音声の読み上げに失敗しました: ${detail}`);
+        void microphone.ensureRunning();
+        idleId = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
+      };
+      microphone.preparePlayback();
+      speechSynthesis.resume();
       speechSynthesis.speak(utterance);
-      const id = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
-      return () => { clearTimeout(id); speechSynthesis.cancel(); };
+      const watchdog = setTimeout(() => {
+        socketRef.current?.send({ type: "speech.error", detail: "timeout" });
+        setCaption("音声の読み上げが開始しませんでした。");
+        send("IDLE");
+      }, 45000);
+      return () => {
+        clearTimeout(watchdog);
+        if (idleId) clearTimeout(idleId);
+        speechSynthesis.cancel();
+      };
     }
     if (state === "ERROR") {
       const id = setTimeout(() => send("RETRY"), 5000);
       return () => clearTimeout(id);
     }
-  }, [state, reply, speaking]);
+  }, [state, reply, speaking, introDone]);
 
   async function enableMic() {
     try {
+      // iOS はユーザー操作から離れた Web Speech を開始しないことがある。
+      // このタップの中で無音の発話を一度通し、後のダブルクラップ応答を解禁する。
+      const unlock = new SpeechSynthesisUtterance(".");
+      unlock.lang = "ja-JP";
+      unlock.volume = 0;
+      speechSynthesis.cancel();
+      speechSynthesis.resume();
+      // iOSは音声エンジンの初回起動が完了する前の発話を無音で捨てる
+      // ことがある。準備音の終了を待ってからマイクを開き、最初の
+      // 「なに？」を確実に実スピーカーへ送る。
+      await new Promise<void>(resolve => {
+        let settled = false;
+        const finish = () => { if (!settled) { settled = true; resolve(); } };
+        unlock.onend = finish;
+        unlock.onerror = finish;
+        window.setTimeout(finish, 1200);
+        speechSynthesis.speak(unlock);
+      });
       await microphone.start();
       setMic("on");
       // 画面ロックの解除はユーザー操作の文脈でしか取れないことがある。

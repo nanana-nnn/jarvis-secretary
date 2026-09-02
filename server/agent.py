@@ -42,7 +42,7 @@ logger = logging.getLogger("uvicorn.error")
 DEFAULT_CODEX_CMD = (
     "codex exec --sandbox {sandbox} --cd {cwd} "
     "--output-schema {schema_file} --output-last-message {out_file} "
-    "--skip-git-repo-check"
+    "--skip-git-repo-check -"
 )
 
 # {sandbox} に入れる値。codex は --sandbox の引数だが、他の CLI では別の
@@ -105,7 +105,7 @@ def build_prompt(text: str, mode: str) -> str:
 利用者の発話: 「{text}」
 
 出典が言えないことは書かないでください。分からなければ分からないと答えてください。
-読み上げ用の返事は80文字程度までにしてください。
+読み上げ用の返事は80文字程度まで、必ず親しいタメ口で書いてください。敬語は使わないでください。
 
 最終メッセージは次のJSONだけを返してください。前後に説明やコードフェンスを付けないでください。
 {{"summary":"画面用の要約(日本語)","spoken_reply":"読み上げ用(日本語80文字程度)","sources":["根拠にしたVault内のファイルパス"]}}

@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from server.router import route
-from server.vault import answer, answer_projects, answer_today, open_tasks
+from server.vault import answer, answer_projects, answer_tasks, answer_today, open_tasks
 
 
 def test_system_wins_over_everything() -> None:
@@ -32,7 +32,20 @@ def test_today_question_is_answered_directly() -> None:
     """「今日のタスク」は Codex を通さない（実測 42.6 秒かかるため）。"""
     result = route("今日のタスクを教えて")
     assert result.intent == "ASK"
-    assert result.direct == "today"
+    assert result.direct == "tasks"
+
+
+def test_today_tasks_are_not_confused_with_daily_decisions(tmp_path: Path) -> None:
+    daily = tmp_path / "01_daily"
+    daily.mkdir(parents=True)
+    (daily / "2026-08-31.md").write_text("## 決めたこと\n- 投稿を止める\n", encoding="utf-8")
+    projects = tmp_path / "02_projects"
+    for number in range(1, 5):
+        _project(projects, f"企画{number}", "active", [f"仕事{number}"])
+    result = answer_tasks(tmp_path)
+    assert result.summary.count(". [") == 3
+    assert "投稿を止める" not in result.summary
+    assert "仕事" in result.spoken_reply
 
 
 def test_intent_records_what_matched() -> None:
@@ -46,7 +59,7 @@ def test_missing_daily_says_so_instead_of_guessing(tmp_path: Path) -> None:
     (tmp_path / "01_daily").mkdir(parents=True)
     result = answer_today(tmp_path, date(2026, 8, 31))
     assert result is not None
-    assert "ありません" in result.spoken_reply
+    assert "まだないよ" in result.spoken_reply
     assert result.sources == [], "無いファイルを出典に挙げない"
 
 
@@ -203,6 +216,6 @@ def test_missing_daily_still_answers_with_open_tasks(tmp_path: Path) -> None:
     _project(tmp_path / "02_projects", "企画", "active", ["残っている仕事"])
     result = answer_today(tmp_path, date(2026, 8, 31))
     assert result is not None
-    assert "デイリーはまだありません" in result.summary
+    assert "デイリーはまだないよ" in result.summary
     assert "残っている仕事" in result.summary
     assert not (tmp_path / "01_daily").exists()   # AI_RULES「勝手に作らない」
