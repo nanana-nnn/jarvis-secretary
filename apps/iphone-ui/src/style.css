@@ -249,6 +249,9 @@ button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 7
 
 .size-probe { position: fixed; z-index: 50; left: 8px; bottom: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.82); color: #7CFC98; font: 11px/1.5 var(--mono); pointer-events: none }
 .debug { position: absolute; z-index: 20; inset: 14px; overflow: auto; padding: 16px; border: 1px solid var(--scheme-outline); border-radius: 18px; background: color-mix(in srgb, var(--scheme-bg) 96%, transparent); font-size: 10px; line-height: 1.5 }
+/* パネルが操作列を覆うので、閉じる口をパネル自身の右上へ置く。
+   指で押しやすい大きさにする（9px の枠線ボタンでは小さすぎる）*/
+.debug-close { position: sticky; top: 0; float: right; z-index: 1; padding: 9px 13px; font-size: 11px; letter-spacing: .08em }
 .settings { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--scheme-outline) }
 .settings label { color: var(--scheme-muted); font-size: 8px }
 .settings input { display: block; width: 58px; margin-top: 3px; border: 1px solid var(--scheme-outline); border-radius: 6px; background: var(--scheme-surface); padding: 4px; font: inherit; color: inherit }

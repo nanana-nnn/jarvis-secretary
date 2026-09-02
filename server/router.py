@@ -25,6 +25,7 @@ class Route:
     mode: Mode
     direct: DirectTopic | None      # None なら Codex へ回す
     matched: str                    # 何に当たったか。誤分類に気づけるよう画面へ出す
+    long: bool = False              # 既定の持ち時間では終わらない仕事か（§10）
 
 
 # §9 の表。左が分類、右が手がかり。**上から順に見る**（SYSTEM が最優先）
@@ -46,10 +47,19 @@ DIRECT: list[tuple[DirectTopic, tuple[str, ...]]] = [
     ("vault",    ("未コミット", "コミットして", "git")),
 ]
 
+# 既定の持ち時間（120秒）では終わらない仕事。記事の執筆や調べ物は分単位かかる。
+# ここに当たると持ち時間を延ばし、進捗を送りながら待つ（§10）。
+# **能力ではなく時間の話。** 何ができるかはサンドボックスの設定で決まる
+LONG_TASK: tuple[str, ...] = (
+    "記事", "note", "ノート記事", "下書き", "サムネ",
+    "リサーチ", "調べて", "調査", "まとめて", "書き上げ", "構成",
+)
+
 
 def route(text: str) -> Route:
     """発話を分類する。どれにも当たらなければ §9 のとおり ASK を既定にする。"""
     normalised = text.strip()
+    long = _is_long(normalised)
 
     for intent, mode, keywords in RULES:
         for keyword in keywords:
@@ -57,10 +67,20 @@ def route(text: str) -> Route:
                 # 読み取り専用の問いだけ、直接答えられるか見る。
                 # 書き込み系(CAPTURE/EXECUTE)は承認が要るので必ずエージェントへ回す
                 direct = _direct_topic(normalised) if intent in ("ASK", "DECIDE") else None
-                return Route(intent=intent, mode=mode, direct=direct, matched=keyword)
+                # 時間のかかる仕事は即答の表に当てない。「今日の記録をまとめて」を
+                # デイリーの読み上げで済ませてしまわないようにする
+                if long:
+                    direct = None
+                return Route(intent=intent, mode=mode, direct=direct, matched=keyword, long=long)
 
     # §9「どれにも当たらなければ ASK を既定とする」
-    return Route(intent="ASK", mode="read_only", direct=_direct_topic(normalised), matched="(default)")
+    return Route(intent="ASK", mode="read_only",
+                 direct=None if long else _direct_topic(normalised),
+                 matched="(default)", long=long)
+
+
+def _is_long(text: str) -> bool:
+    return any(keyword in text for keyword in LONG_TASK)
 
 
 def _direct_topic(text: str) -> DirectTopic | None:

@@ -52,6 +52,10 @@ DEFAULT_CODEX_CMD = (
 DEFAULT_SANDBOX_READ = "read-only"
 DEFAULT_SANDBOX_WRITE = "workspace-write"
 DEFAULT_TIMEOUT = 120          # §10「通常 120 秒」
+# 記事の執筆・調べ物は分単位かかる。120秒で殺すと「秘書として何もできない」に
+# なるので、時間のかかる用件（router.LONG_TASK）だけこちらを使う。
+# 待たせるぶん、進捗を送り、「やめて」で止められるようにするのが条件（2026-09-02）
+LONG_TIMEOUT = int(os.getenv("AGENT_LONG_TIMEOUT", "900"))   # 15分
 
 SCHEMA = {
     "type": "object",
@@ -120,11 +124,12 @@ class CodexAgent:
         self.timeout = timeout
         self._lock = asyncio.Lock()
 
-    async def run(self, text: str, mode: str = "read_only") -> AgentResult:
+    async def run(self, text: str, mode: str = "read_only", timeout: int | None = None) -> AgentResult:
+        """timeout を渡すとこの1回だけ持ち時間を変える（記事執筆や調べ物は分単位かかる）。"""
         async with self._lock:                      # §10「同時実行は1ジョブ」
-            return await self._run(text, mode)
+            return await self._run(text, mode, timeout or self.timeout)
 
-    async def _run(self, text: str, mode: str) -> AgentResult:
+    async def _run(self, text: str, mode: str, timeout: int) -> AgentResult:
         work = Path(tempfile.mkdtemp(prefix="jarvis-agent-"))
         prompt_file = work / "prompt.txt"
         schema_file = work / "schema.json"
@@ -162,14 +167,21 @@ class CodexAgent:
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                _, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
+                _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
                 # §17 AGENT_TIMEOUT「ジョブを中止し、変更を破棄して報告」
                 shutil.rmtree(work, ignore_errors=True)
                 proposed_root = None
-                return AgentResult("", "", error=f"AGENT_TIMEOUT ({self.timeout}s)")
+                return AgentResult("", "", error=f"AGENT_TIMEOUT ({timeout}s)")
+            except asyncio.CancelledError:
+                # 「やめて」で割り込まれた。子プロセスを残さず片付けてから伝える
+                process.kill()
+                await process.wait()
+                shutil.rmtree(work, ignore_errors=True)
+                proposed_root = None
+                raise
 
             if process.returncode != 0:
                 tail = (stderr or b"").decode("utf-8", "ignore").strip().splitlines()[-3:]

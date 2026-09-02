@@ -187,8 +187,24 @@ export default function App() {
 
         // 答えを作り始めた。時間がかかるので画面で分かるようにする（§12）
         if (event.type === "agent.started") {
-          setCaption(`調べています…（${String(event.intent ?? "")}）`);
+          // 分単位かかる用件は、待ち時間の見当と止め方を最初に見せる。
+          // 黙って何分も待たせないための約束（2026-09-02）
+          setCaption(event.long
+            ? "取りかかっています…（数分かかります。「やめて」で止まります）"
+            : `調べています…（${String(event.intent ?? "")}）`);
           send("AGENT_STARTED");
+        }
+
+        // 経過。長い仕事のあいだ、生きていることを見せ続ける
+        if (event.type === "agent.progress") {
+          const elapsed = typeof event.elapsed === "number" ? event.elapsed : 0;
+          setCaption(`作業中… ${Math.floor(elapsed / 60)}分${String(elapsed % 60).padStart(2, "0")}秒（「やめて」で止まります）`);
+        }
+
+        // 「やめて」で止めた。待機へ戻す
+        if (event.type === "agent.cancelled") {
+          setCaption("止めました。");
+          send("IDLE");
         }
 
         // 答えが出た。これを読み上げる（§10 spoken_reply）
@@ -450,7 +466,7 @@ export default function App() {
           <button className="debug-action" onClick={() => setDebug(value => !value)} aria-label="DEBUG LOG">•••</button>
       </div>
     </footer>
-    {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} /> : null}
+    {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} onClose={() => setDebug(false)} /> : null}
     {/* ホーム画面 PWA では start_url が "/" なので ?size=1 が届かない。
         崩れるのが standalone のときだけなので、DEBUG からも出す */}
     {showDebug || params?.get("size") === "1" ? <SizeProbe /> : null}

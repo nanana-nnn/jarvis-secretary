@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDiscon
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from .agent import CodexAgent
+from .agent import CodexAgent, LONG_TIMEOUT
 from .audio import SpeechSplitter
 from .config import Settings
 from .router import route
@@ -31,6 +31,8 @@ logger = logging.getLogger("uvicorn.error")
 
 # §11 承認フロー「120秒無操作 → 自動却下」
 APPROVAL_TIMEOUT_S = 120
+# 長い仕事の経過を送る間隔。黙って待たせないための最低条件（2026-09-02）
+PROGRESS_EVERY_S = 10
 DEFAULT_SCHEME_PATH = Path.home() / ".local/state/caelestia/scheme.json"
 # caelestia が今出している壁紙。配色と同じタイミングで書き換わる
 DEFAULT_WALLPAPER_PATH = Path.home() / ".local/state/caelestia/wallpaper/path.txt"
@@ -554,6 +556,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         # socket.receive() が呼ばれないと、送られ続ける音声フレームが溜まって
         # 接続が切れ、端末が再接続して STANDBY へ戻る（2026-09-01 実機）
         job: asyncio.Task | None = None
+        # 走っているエージェント。「やめて」で止めるためにここへ出しておく
+        agent_task: asyncio.Task | None = None
 
         async def finish(utterance) -> None:
             """確定した発話を書き起こして返す。失敗は黙って捨てず理由を送る。"""
@@ -605,13 +609,35 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             # ここから先は時間がかかる。待たせると分かるよう先に知らせる（§12）
             await emit({
                 "type": "agent.started", "intent": decision.intent,
-                "matched": decision.matched, "ts": timestamp_ms(),
+                "matched": decision.matched, "long": decision.long, "ts": timestamp_ms(),
             })
             started = timestamp_ms()
             # §11-1 実行前の状態を保存する。実行後に取ると、ユーザーが作業中に
             # 触ったぶんと区別できなくなる
             before_dirty = dirty_paths(vault_path) if decision.mode == "propose_write" else None
-            outcome = await agent.run(text, decision.mode)
+            # 時間のかかる用件は持ち時間を延ばす。**ただし黙って待たせない。**
+            # 経過を送り続け、「やめて」で止められる状態を保つのが延長の条件
+            # （2026-09-02。長い仕事ほど、途中で違うと気づいたとき止めたくなる）
+            nonlocal agent_task
+            agent_task = asyncio.create_task(
+                agent.run(text, decision.mode, timeout=LONG_TIMEOUT if decision.long else None))
+            try:
+                while True:
+                    done, _ = await asyncio.wait({agent_task}, timeout=PROGRESS_EVERY_S)
+                    if done:
+                        break
+                    await emit({
+                        "type": "agent.progress", "intent": decision.intent,
+                        "elapsed": (timestamp_ms() - started) // 1000, "ts": timestamp_ms(),
+                    })
+                outcome = agent_task.result()
+            except asyncio.CancelledError:
+                # 「やめて」で割り込まれた。提案は作られていないので捨てるものは無い
+                logger.info("[AGENT] cancelled by user (%dms)", timestamp_ms() - started)
+                await emit({"type": "agent.cancelled", "intent": decision.intent, "ts": timestamp_ms()})
+                return
+            finally:
+                agent_task = None
             took = timestamp_ms() - started
             if outcome.error:
                 logger.warning("[AGENT] %s (%dms)", outcome.error, took)
@@ -678,7 +704,16 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                     for utterance in splitter.feed(chunk):
                         if job is not None and not job.done():
                             # §10「同時実行は1ジョブ」。考えている最中のマイクは
-                            # ほぼ環境音なので、待たせずに捨てる
+                            # ほぼ環境音なので、待たせずに捨てる。
+                            # **ただし「やめて」だけは通す。** 長い仕事ほど途中で
+                            # 止めたくなるので、割り込みの口をここに開ける
+                            # （2026-09-02。持ち時間を延ばした条件のひとつ）
+                            if agent_task is not None and not agent_task.done():
+                                heard = await transcriber.transcribe(utterance.pcm)
+                                if heard is not None and heard.text and route(heard.text).intent == "SYSTEM":
+                                    logger.info("[AGENT] stop requested: %r", heard.text[:40])
+                                    agent_task.cancel()
+                                    continue
                             logger.info("[STT] busy, dropped utterance %dms", utterance.ms)
                             continue
                         job = asyncio.create_task(finish(utterance))

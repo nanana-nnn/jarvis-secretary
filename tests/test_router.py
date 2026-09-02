@@ -105,3 +105,30 @@ def test_projects_come_from_the_index(tmp_path: Path) -> None:
 def test_unknown_topic_returns_none(tmp_path: Path) -> None:
     """扱えない問いは None。ここで作り話をせず、呼び出し側が Codex へ回す。"""
     assert answer(tmp_path, "なんだかよく分からない話") is None
+
+
+def test_long_tasks_get_flagged() -> None:
+    """記事の執筆や調べ物は分単位かかる。持ち時間を延ばす目印を立てる（2026-09-02）。"""
+    assert route("JARVISの設計書のnote記事を書いて").long is True
+    assert route("競合をリサーチして").long is True
+    assert route("サムネを作って").long is True
+    # 短い問いは延長しない。即答できるものを待たせない
+    assert route("今日のタスクは？").long is False
+    assert route("ありがとう").long is False
+
+
+def test_long_tasks_never_take_the_direct_shortcut() -> None:
+    """「今日の記録をまとめて」を、デイリーの読み上げで済ませてしまわない。
+
+    direct は即答用の表なので、時間のかかる仕事に当てると
+    「まとめて」と頼んだのに読み上げただけ、という取り違えが起きる。
+    """
+    result = route("今日の記録をまとめて")
+    assert result.long is True
+    assert result.direct is None
+
+
+def test_stop_words_still_route_to_system_while_busy() -> None:
+    """割り込みの口。考えている最中でも「やめて」は SYSTEM へ落ちる必要がある。"""
+    for word in ("やめて", "キャンセル", "終わり"):
+        assert route(word).intent == "SYSTEM"
