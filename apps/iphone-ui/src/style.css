@@ -46,9 +46,13 @@ button { font: inherit; color: inherit }
    誤って結びつけて auto 方式へ戻したことが2回あったが、実機SizeProbeで
    確認したところ各段の高さ自体は正しく計算されており（合計が画面ぴったり）、
    ズレの正体は grid ではなく iOS standalone のスクロール位置（別途 JS で対策）
-   だった。1fr 1fr 1fr に戻す（2026-09-02） */
+   だった。1fr へ戻す（2026-09-02）。
+   **minmax(0, 1fr) にすること。** 素の `1fr` は `minmax(auto, 1fr)` の略で、
+   中身より縮まない。回答が伸びると1段目だけ背が伸びて等分が崩れていた
+   （2026-09-02、実機で「返答のとき高さが変わる」として報告された） */
 .shell {
-  position: relative; width: 100%; height: 100%; display: grid; grid-template-rows: 1fr 1fr 1fr auto;
+  position: relative; width: 100%; height: 100%; display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 10px;
   padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0px max(12px, env(safe-area-inset-left));
   background: transparent; overflow: hidden;
@@ -184,9 +188,10 @@ button { font: inherit; color: inherit }
 
 /* 1段目: fastfetch。ロゴも枠も37桁なので、37桁が画面幅に収まる字送りで頭打ちにする
    （37 * 0.6em * 15px = 333px < 366px）。
-   grid の 1fr は既定で「中身より縮まない」ので、余白を詰めて中身の最小高さを
-   他の2段（core/live）以下に収める。詰めないと fetch だけ膨らんで3等分にならない */
-.fetch { display: grid; justify-items: center; align-content: center; gap: 4px; padding: 8px 6px; font-size: clamp(8px, 3.9vw, 16px); line-height: 1.24; white-space: pre }
+   min-height:0 と overflow:hidden で、段の高さを超えたぶんは切る（伸ばさない） */
+.fetch { display: grid; justify-items: center; align-content: center; gap: 4px; padding: 8px 6px;
+  min-height: 0; overflow: hidden;
+  font-size: clamp(8px, 3.9vw, 16px); line-height: 1.24; white-space: pre }
 /* pre は UA 既定の font-family: monospace が継承より強いので、明示的に当て直す。
    忘れると枠線だけ別フォントに落ちて送りが2倍になり、桁が崩れる */
 .fetch-logo, .fetch-box { margin: 0; font-family: var(--mono); font-size: inherit; line-height: inherit }

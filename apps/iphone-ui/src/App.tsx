@@ -156,15 +156,10 @@ export default function App() {
     // 起こすのは待機中だけ。会話中の物音で状態を飛ばさない
     () => {
       if (stateRef.current !== "SLEEP") return;
-      // 拍手を会話開始の固定入力としてPCへ送る。マイクで聞き直す必要がなく、
-      // Codexへ即時に渡せる。「なにする？」は下のカード（Live キャプション）に
-      // 出す表示専用の一言（WAKING の effect で設定）で、実際に Codex へ送る文
-      // とは分ける（2026-09-02、本人の指定：JARVIS は最初に別の一言を
-      // 言うかもしれないので、表示文言と実クエリを固定で結び付けない）。
-      // 上の文字回答カードには実際に投げた文をそのまま出す（何を聞いたか分かるように）
-      const query = "タスク教えて";
-      socketRef.current?.send({ type: "text.input", text: query });
-      openQaSession(query, "listening");
+      // 拍手は起こすだけ。何を頼むかは実際に聞いてから判定する
+      // （2026-09-02、本人の指定：「手を叩く＝なにする？」ではない。
+      // 固定文をその場でCodexへ送っていたのをやめ、WAKING→LISTENING→
+      // audio.final という通常の音声経路へ合流させる）
       send("CLAP_DETECTED");
     },
     next => {
@@ -428,13 +423,18 @@ export default function App() {
     // 再描画のたびに再実行されても、起動ごとに一度だけ実行する
     if (state === "WAKING" && !wakeStartedRef.current) {
       wakeStartedRef.current = true;
-      // 「なにする？」は下のカード（Live のキャプション）に出す表示専用の文言。
-      // 実際に Codex へ送る文とは分ける（本人の指定：JARVIS は最初に
-      // 別の一言を言うかもしれないので、表示と実クエリを固定で結び付けない）
-      setCaption("なにする？");
       setSpeaking(false);
       setHeardNothingAt(0);
-      const id = setTimeout(() => send("WAKE_FINISHED"), WAKE_ANIM_MS);
+      // カードは LISTENING に入ってから開く（本人の指定：拍手＝「なにする？」
+      // ではない。実際に聞いてから走らせる）。質問はまだ無いので空のまま
+      openQaSession("", "listening");
+      const id = setTimeout(() => {
+        // 「なにする？」は LISTENING のあいだだけ表示する文言（本人の指定：
+        // それ以外で出ると意味が通らない）。聞き取れたら audio.final が
+        // 本物の文で上書きする。何も聞けなければ下の IDLE 側で消す
+        setCaption("なにする？");
+        send("WAKE_FINISHED");
+      }, WAKE_ANIM_MS);
       return () => clearTimeout(id);
     }
     if (state !== "WAKING") wakeStartedRef.current = false;
@@ -442,7 +442,7 @@ export default function App() {
       // 話し始めていたら待機へ戻さない。言い終わるまで待つ
       // （終端は VAD が決める。長すぎる発話は §6 の 30秒で必ず切れる）
       if (speaking) return;
-      const id = setTimeout(() => send("IDLE"), LISTEN_IDLE_MS);
+      const id = setTimeout(() => { setCaption(""); send("IDLE"); }, LISTEN_IDLE_MS);
       return () => clearTimeout(id);
     }
     // 文字回答カードを見せたまま自動で待機へ戻す（読み上げ廃止・2026-09-02）。
@@ -480,7 +480,11 @@ export default function App() {
   // 「戻る」：カードを閉じて待機へ。「続けて聞く」：カードは残したまま
   // 次の発話を録る（WAKING を経由しない）
   function closeQa() { setQa([]); send("IDLE"); }
-  function continueQa() { appendQaExchange("", "listening"); send("CONTINUE"); }
+  function continueQa() {
+    appendQaExchange("", "listening");
+    setCaption("なにする？");   // 起動直後と同じく LISTENING のあいだだけ出す
+    send("CONTINUE");
+  }
 
   async function decideApproval(approve: boolean) {
     if (!approval) return;

@@ -221,11 +221,14 @@ def test_missing_daily_still_answers_with_open_tasks(tmp_path: Path) -> None:
     assert not (tmp_path / "01_daily").exists()   # AI_RULES「勝手に作らない」
 
 
-def test_clap_fixed_question_always_goes_through_codex() -> None:
-    """拍手で実際に送る固定質問は「タスク教えて」（画面に見せる「なにする？」とは別。
-    2026-09-02、本人の指定）。先読みキャッシュへ即座に乗せず、毎回 Codex を実際に
-    起動して Vault を読ませる。一度は逆に「先読みへ即答させるべき」と直したが、
-    本人はそれを望んでいなかった。"""
+def test_spoken_task_request_goes_through_codex() -> None:
+    """口で頼んだ「タスク教えて」は先読みキャッシュへ即座に乗せず、
+    毎回 Codex を実際に起動して Vault を読ませる（2026-09-02、本人の指定）。
+
+    経緯：一度は「先読みへ即答させるべき」と直したが本人はそれを望んでいなかった。
+    さらに拍手時にこの文を固定でPCへ送る実装も入れたが、これも取り下げた
+    （拍手は起こすだけ。何を頼むかは実際に聞いてから決まる）。
+    """
     result = route("タスク教えて")
     assert result.intent == "ASK"
     assert result.direct is None
