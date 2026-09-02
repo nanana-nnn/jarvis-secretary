@@ -193,6 +193,38 @@ button { font: inherit; color: inherit }
 .fetch-logo { color: var(--scheme-primary); font-weight: 700 }
 .fetch-box { color: var(--scheme-muted) }
 
+/* 1段目の差し替え：文字回答カード（DESIGN.md「次の実装：文字回答カード」）。
+   音声読み上げの代わり。質問中だけ .fetch を this に差し替える。
+   高さは固定にする（出力中に伸び縮みさせない。中は .qa-scroll で内部スクロール） */
+.qa-card { display: flex; flex-direction: column; padding: 10px 12px; height: clamp(210px, 30dvh, 300px);
+  font-size: clamp(9px, 3.4vw, 14px); line-height: 1.6; text-align: left; transition: box-shadow 1.2s ease; }
+.qa-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch }
+.qa-exchange + .qa-exchange { margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
+/* Starship 風の丸いバッジ。プロンプト行の頭に置く */
+.qa-badge { color: var(--scheme-primary) }
+.qa-prompt { margin: 0 0 4px; color: var(--scheme-text); font-weight: 700; overflow-wrap: anywhere }
+.qa-line { margin: 2px 0; color: var(--scheme-muted); white-space: pre-wrap; overflow-wrap: anywhere }
+.qa-cursor { color: var(--scheme-primary); animation: qa-blink 1s steps(2, start) infinite }
+@keyframes qa-blink { 50% { opacity: 0 } }
+
+/* 聞き取り開始〜回答表示完了は、縁・背景・外側のぼかしを壁紙テーマ色で
+   約2.5秒周期に明暗させる（回転する縁は使わない。§7の amb-ring とは別物）*/
+.qa-active {
+  animation: qa-breathe 2.5s ease-in-out infinite;
+  border: 1px solid var(--scheme-primary);
+}
+@keyframes qa-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--scheme-primary) 0%, transparent), inset 0 0 24px color-mix(in srgb, var(--scheme-primary) 6%, transparent) }
+  50%      { box-shadow: 0 0 22px 2px color-mix(in srgb, var(--scheme-primary) 45%, transparent), inset 0 0 24px color-mix(in srgb, var(--scheme-primary) 16%, transparent) }
+}
+/* 完了：呼吸を止め、弱い常時発光へ落ち着かせる */
+.qa-idle { border: 1px solid color-mix(in srgb, var(--scheme-primary) 35%, transparent);
+  box-shadow: 0 0 12px 0 color-mix(in srgb, var(--scheme-primary) 18%, transparent); }
+
+.qa-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
+.qa-back, .qa-continue { font-size: 10px; padding: 8px 12px }
+
 /* 2段目: lavat のドット。面いっぱいに描く。
    縦横比を固定すると letterbox の隙間が出る（上に10px、下は23px切れていた）。
    本物も端末の実寸でグリッドを組むので、こちらも面の実寸から行数を出す */

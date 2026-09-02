@@ -22,7 +22,7 @@ describe("行き止まりがないこと", () => {
     const events: SecretaryEvent[] = [
       "CONNECTED", "CONNECT_FAILED", "DISCONNECTED", "CLAP_DETECTED", "WAKE_FINISHED",
       "AUDIO_FINAL", "AGENT_STARTED", "APPROVAL_REQUIRED", "AGENT_COMPLETED",
-      "IDLE", "FINISH", "SYSTEM_ERROR", "RETRY",
+      "IDLE", "FINISH", "SYSTEM_ERROR", "RETRY", "CONTINUE",
     ];
 
     // 各状態から到達できる先を辿り、SLEEP に着けるかを見る
@@ -51,5 +51,14 @@ describe("行き止まりがないこと", () => {
     const thinking = transition("TRANSCRIBING", "AGENT_STARTED");
     expect(thinking).toBe("THINKING");
     expect(transition(thinking, "AGENT_COMPLETED")).toBe("SPEAKING");
+  });
+
+  it("THINKING 中の「やめて」は SPEAKING へ進み、カードへ表示できる（2026-09-02）", () => {
+    // 直接 SLEEP へ落とすと、中断した旨を文字回答カードへ出す前に消える
+    expect(transition("THINKING", "IDLE")).toBe("SPEAKING");
+  });
+
+  it("文字回答カードの「続けて聞く」は WAKING を経由せず LISTENING へ戻る", () => {
+    expect(transition("SPEAKING", "CONTINUE")).toBe("LISTENING");
   });
 });

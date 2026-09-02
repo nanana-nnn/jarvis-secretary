@@ -18,14 +18,6 @@ export class ClapMicrophone {
     private readonly onPcm?: (chunk: ArrayBuffer) => void,
   ) {}
 
-  /** iOS のオーディオセッションを読み上げ側へ切り替える。 */
-  preparePlayback(): void {
-    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
-    if (session) {
-      try { session.type = "playback"; } catch { /* 非対応環境は Web Speech に任せる */ }
-    }
-  }
-
   /** マイクが実際に動いているか。止まっていれば理由を返す */
   health(): { ok: boolean; context: string; track: string; muted: boolean } {
     const track = this.stream?.getAudioTracks()[0];

@@ -4,6 +4,7 @@ import { ClapDetector } from "./audio/clap-detector";
 import { ClapMicrophone } from "./audio/microphone";
 import { ScreenWakeLock } from "./audio/wake-lock";
 import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
+import { AnswerCard, type QAExchange, type QAPhase } from "./components/AnswerCard";
 import { DebugPanel } from "./components/DebugPanel";
 import { Ambience } from "./components/Ambience";
 import { Fetch, type Facts } from "./components/Fetch";
@@ -13,14 +14,16 @@ import { SizeProbe } from "./components/SizeProbe";
 import { transition } from "./states/machine";
 import type { SecretaryEvent, SecretaryState } from "./states/types";
 
-// WAKE_ANIM_MS は §15 の指パッチン衝撃波と状態遷移を揃える。
+// WAKE_ANIM_MS は §15 の手拍子2回の衝撃波と状態遷移を揃える。
 // LISTEN_IDLE_MS を過ぎると自分から待機へ戻る（言い忘れたまま起きっぱなしにしない）。
 const WAKE_ANIM_MS = 250;
-// §6 の表は 8000。実機だと指を鳴らして言いかけるだけで寝てしまい短すぎたので
-// 延ばしてある。あわせて、話し始めたらこのタイマーは止める（下の speaking）
+// §6 の表は 8000。実機だと話しかけるだけで寝てしまい短すぎたので延ばしてある。
+// あわせて、話し始めたらこのタイマーは止める（下の speaking）
 const LISTEN_IDLE_MS = 20000;
-const POST_SPEAK_IDLE_MS = 8000;   // §6 読み上げ後に待機へ戻る
-const SNAP_TAIL_MS = 450;          // 指パッチンの余韻が消えるまで録音を待つ
+// 文字回答カードを見せたまま自動で待機へ戻すまで（2026-09-02、音声読み上げ廃止）。
+// 読み上げと違い「終わった」が音で分からないので、読む時間を見込んで長めにする
+const POST_ANSWER_IDLE_MS = 20000;
+const SNAP_TAIL_MS = 450;          // 拍手の余韻が消えるまで録音を待つ
 const HEARD_NOTHING_MS = 5000;     // 「聞き取れませんでした」を見せてから待機へ戻すまで
 
 // サーバーから来る差し色を検査する。信頼せずに形だけ見る。
@@ -101,15 +104,16 @@ export default function App() {
   const [settings, setSettings] = useState<ClapSettings>(loadClapSettings);
   // 実測が届くまでは何も点灯させない（分からないものを「動いている」と出さない）
   const [live, setLive] = useState<LiveFacts>({ apps: {}, vault: { tracked: false, dirty: -1 }, phones: 0 });
-  // 聞き取り結果の字幕。空文字は「まだ何も無い」を表す
+  // 聞き取り結果の字幕。空文字は「まだ何も無い」を表す（Live 3段目の1行）
   const [caption, setCaption] = useState("");
   // サーバーが発話を検出した。話している間に待機へ戻さないための印
   const [speaking, setSpeaking] = useState(false);
-  const [introDone, setIntroDone] = useState(false);
   // 「聞き取れませんでした」を出した時刻。少し見せてから待機へ戻す
   const [heardNothingAt, setHeardNothingAt] = useState(0);
-  // 読み上げる答え。聞き取った文ではなく、これを喋る
-  const [reply, setReply] = useState("");
+  // 文字回答カード（1段目）の中身。音声読み上げの代わり（2026-09-02）。
+  // 質問ごとに1件。「続けて聞く」で同じ画面へ積み増す
+  const [qa, setQa] = useState<QAExchange[]>([]);
+  const qaIdRef = useRef(0);
   const [approval, setApproval] = useState<{ id: string; summary: string; files: string[]; diff: string; warnings: string[] } | null>(null);
   // マイクが止まったまま起こせない状態。ユーザー操作が要るので画面に出す
   const [micStalled, setMicStalled] = useState(false);
@@ -125,6 +129,28 @@ export default function App() {
 
   const send = (event: SecretaryEvent) => setState(current => transition(current, event));
 
+  // 文字回答カードの操作。詳しくは components/AnswerCard.tsx
+  const openQaSession = (question: string, phase: QAPhase) =>
+    setQa([{ id: ++qaIdRef.current, question, lines: [], phase }]);
+  const appendQaExchange = (question: string, phase: QAPhase) =>
+    setQa(prev => [...prev, { id: ++qaIdRef.current, question, lines: [], phase }]);
+  const updateLastQa = (patch: Partial<QAExchange>) =>
+    setQa(prev => {
+      if (!prev.length) return prev;
+      const next = [...prev];
+      next[next.length - 1] = { ...next[next.length - 1], ...patch };
+      return next;
+    });
+  const appendQaLines = (lines: string[]) =>
+    setQa(prev => {
+      if (!prev.length || !lines.length) return prev;
+      const next = [...prev];
+      const last = next[next.length - 1];
+      next[next.length - 1] = { ...last, lines: [...last.lines, ...lines] };
+      return next;
+    });
+  const appendQaLine = (line: string) => appendQaLines([line]);
+
   const detector = useMemo(() => new ClapDetector(
     settings,
     // 起こすのは待機中だけ。会話中の物音で状態を飛ばさない
@@ -132,10 +158,10 @@ export default function App() {
       if (stateRef.current !== "SLEEP") return;
       // 拍手を会話開始の固定入力としてPCへ送る。マイクで「なに？」を
       // 聞き直す必要がなく、Codexへ即時に渡せる。
-      socketRef.current?.send({ type: "text.input", text: "なにしよう？" });
-      setCaption("なにしよう？");
+      const question = "なにしよう？";
+      socketRef.current?.send({ type: "text.input", text: question });
+      openQaSession(question, "thinking");
       send("CLAP_DETECTED");
-      window.setTimeout(() => send("AUDIO_FINAL"), WAKE_ANIM_MS + 20);
     },
     next => {
       setLogs(next);
@@ -197,31 +223,33 @@ export default function App() {
 
         // 答えを作り始めた。時間がかかるので画面で分かるようにする（§12）
         if (event.type === "agent.started") {
+          updateLastQa({ phase: "thinking" });
           // 分単位かかる用件は、待ち時間の見当と止め方を最初に見せる。
           // 黙って何分も待たせないための約束（2026-09-02）
-          setCaption(event.long
-            ? "取りかかっています…（数分かかります。「やめて」で止まります）"
-            : `調べています…（${String(event.intent ?? "")}）`);
+          if (event.long) appendQaLine("取りかかります。数分かかります。「やめて」で止まります。");
           send("AGENT_STARTED");
         }
 
         // 経過。長い仕事のあいだ、生きていることを見せ続ける
         if (event.type === "agent.progress") {
           const elapsed = typeof event.elapsed === "number" ? event.elapsed : 0;
-          setCaption(`作業中… ${Math.floor(elapsed / 60)}分${String(elapsed % 60).padStart(2, "0")}秒（「やめて」で止まります）`);
+          appendQaLine(`作業中… ${Math.floor(elapsed / 60)}分${String(elapsed % 60).padStart(2, "0")}秒`);
         }
 
-        // 「やめて」で止めた。待機へ戻す
+        // 「やめて」で止めた。カードへ表示してから待機へ戻れる状態にする
         if (event.type === "agent.cancelled") {
-          setCaption("止めました。");
+          appendQaLine("止めました。");
+          updateLastQa({ phase: "done" });
           send("IDLE");
         }
 
-        // 答えが出た。これを読み上げる（§10 spoken_reply）
+        // 答えが出た。文字回答カードへ追加表示する（読み上げは廃止・2026-09-02）
         if (event.type === "agent.completed") {
-          const spoken = typeof event.spoken_reply === "string" ? event.spoken_reply : "";
-          setCaption(typeof event.summary === "string" && event.summary ? event.summary : spoken);
-          setReply(spoken);
+          const summary = typeof event.summary === "string" && event.summary ? event.summary
+            : typeof event.spoken_reply === "string" ? event.spoken_reply : "";
+          const lines = summary.split("\n").map(line => line.trim()).filter(Boolean);
+          appendQaLines(lines.length ? lines : ["（答えが空でした）"]);
+          updateLastQa({ phase: "done" });
           send("AGENT_COMPLETED");
         }
 
@@ -237,6 +265,7 @@ export default function App() {
             warnings: Array.isArray(event.warnings) ? event.warnings.filter((line): line is string => typeof line === "string") : [],
           });
           setCaption("CHANGE REVIEW REQUIRED");
+          appendQaLine("確認をお願いします（下の画面で承認／却下）。");
           send("APPROVAL_REQUIRED");
         }
 
@@ -246,9 +275,11 @@ export default function App() {
         // 話し始めた。待機へ戻るタイマーを止める（§8 の VAD による検出）
         if (event.type === "audio.speaking") setSpeaking(true);
 
-        // 聞き取りが確定した（§12 audio.final）。字幕に出して読み上げへ進む
+        // 聞き取りが確定した（§12 audio.final）。「続けて聞く」で開いた
+        // 空の質問行をここで埋める（拍手起動の固定質問はこの経路を通らない）
         if (event.type === "audio.final" && typeof event.text === "string") {
           setCaption(event.text);
+          updateLastQa({ question: event.text, phase: "thinking" });
           send("AUDIO_FINAL");
         }
 
@@ -256,12 +287,16 @@ export default function App() {
         if (event.type === "system.error") {
           const message = typeof event.message === "string" ? event.message : "";
           if (event.code === "STT_FAILED") {
-            // その場では寝ない。指パッチンの余韻で空振りすることがあり、
+            // その場では寝ない。拍手の余韻で空振りすることがあり、
             // 即座に寝ると話しかける前に落ちる。文言を見せてから少し待って戻す
             setCaption(message || "聞き取れませんでした");
+            appendQaLine(message || "聞き取れませんでした");
+            updateLastQa({ phase: "done" });
             setHeardNothingAt(Date.now());
           } else {
             setCaption(message);
+            appendQaLine(message);
+            updateLastQa({ phase: "done" });
             send("SYSTEM_ERROR");
           }
         }
@@ -316,19 +351,24 @@ export default function App() {
   // 聞き取れなかったときは、文言を5秒見せてから待機へ戻す
   useEffect(() => {
     if (!heardNothingAt) return;
-    const id = setTimeout(() => { setHeardNothingAt(0); send("IDLE"); }, HEARD_NOTHING_MS);
+    const id = setTimeout(() => { setHeardNothingAt(0); setQa([]); send("IDLE"); }, HEARD_NOTHING_MS);
     return () => clearTimeout(id);
   }, [heardNothingAt]);
+
+  // 待機へ戻ったら文字回答カードを閉じる。どの経路（ボタン・タイムアウト・
+  // エラー復帰）で戻っても、ここで確実に片付ける
+  useEffect(() => { if (state === "SLEEP" && qa.length) setQa([]); }, [state, qa.length]);
 
   // 録音は LISTENING の間だけ。待機中に送り続けない
   useEffect(() => {
     if (mic !== "on") return;
-    if (state !== "LISTENING" || !introDone) { microphone.setRecording(false); return; }
-    // 指パッチンの余韻が発話として書き起こされ、空振りして待機へ戻っていた
-    // （2026-08-31 のログ: utterance 360ms → ''）。鳴らした音が消えてから録る
+    if (state !== "LISTENING") { microphone.setRecording(false); return; }
+    // 拍手の余韻や「続けて聞く」タップの音が発話として書き起こされ、
+    // 空振りして待機へ戻っていた（2026-08-31 のログ: utterance 360ms → ''）。
+    // 音が消えてから録る
     const id = setTimeout(() => microphone.setRecording(true), SNAP_TAIL_MS);
     return () => { clearTimeout(id); microphone.setRecording(false); };
-  }, [microphone, mic, state, introDone]);
+  }, [microphone, mic, state]);
 
   // 画面ロックの見張り。OS の都合で解放されるので、外れていたら取り直す
   useEffect(() => {
@@ -337,18 +377,13 @@ export default function App() {
     return () => clearInterval(id);
   }, [wakeLock, mic]);
 
-  // マイクの見張り。iOS は読み上げで録音セッションを止めることがあり、
-  // 一度スリープすると指パッチンを拾わなくなっていた（2026-08-31 実機）。
-  // onend だけに頼らず、2秒ごとに生死を見て起こし直す。
+  // マイクの見張り。iOS はセッション中断でマイクが止まったまま戻らないことが
+  // あるので（2026-08-31 実機）、2秒ごとに生死を見て起こし直す。
   // 起こせなかったときは画面に出す（黙って効かないままにしない）
   useEffect(() => {
     if (mic !== "on") return;
     let stalls = 0;
     const id = setInterval(async () => {
-      // 読み上げ中にミュートされるのは iOS の正常な動き。ここで開き直すと
-      // 毎回マイクを壊しに行くことになる（2026-08-31、2秒ごとに競合していた）
-      if (speechSynthesis.speaking) { stalls = 0; return; }
-
       if (microphone.health().ok) { stalls = 0; setMicStalled(false); return; }
 
       // 読み上げ直後は戻るまでに間がある。続けて詰まったときだけ手当てする
@@ -363,115 +398,37 @@ export default function App() {
   }, [microphone, mic]);
 
   useEffect(() => {
-    // hello の再生終了で再描画されても、起動ごとに一度だけ実行する。
-    // introDone は前回の起動で true のまま残るため、state の境目は ref で管理する。
+    // 再描画のたびに再実行されても、起動ごとに一度だけ実行する
     if (state === "WAKING" && !wakeStartedRef.current) {
       wakeStartedRef.current = true;
       setCaption("");
-      setReply("");
       setSpeaking(false);
       setHeardNothingAt(0);
-      setIntroDone(false);
-      microphone.preparePlayback();
-      const hello = new SpeechSynthesisUtterance("なにしよう？");
-      hello.lang = "ja-JP";
-      hello.volume = 1;
-      hello.rate = 1;
-      hello.onstart = () => socketRef.current?.send({ type: "speech.started", utterance: "wake" });
-      // 読み上げが終わった直後に必ず起こし直す。iOS は再生で録音を止めることがある
-      hello.onend = () => {
-        socketRef.current?.send({ type: "speech.ended", utterance: "wake" });
-        setIntroDone(true);
-        void microphone.ensureRunning();
-      };
-      hello.onerror = event => {
-        socketRef.current?.send({ type: "speech.error", utterance: "wake", detail: event.error || "unknown" });
-        setIntroDone(true);
-        void microphone.ensureRunning();
-      };
-      // iOSでonendが来ない場合もAWAKENINGを残さない。
-      const helloFallback = window.setTimeout(() => setIntroDone(true), 3000);
-      speechSynthesis.resume();
-      // iOSではaudioSession切替直後のspeakが無音になることがある。
-      // 直前cancelも行わず、再生経路が切り替わる猶予を置く。
-      const speakTimer = window.setTimeout(() => speechSynthesis.speak(hello), 180);
       const id = setTimeout(() => send("WAKE_FINISHED"), WAKE_ANIM_MS);
-      return () => { clearTimeout(id); clearTimeout(helloFallback); clearTimeout(speakTimer); };
+      return () => clearTimeout(id);
     }
     if (state !== "WAKING") wakeStartedRef.current = false;
     if (state === "LISTENING") {
-      if (!introDone) return;
       // 話し始めていたら待機へ戻さない。言い終わるまで待つ
       // （終端は VAD が決める。長すぎる発話は §6 の 30秒で必ず切れる）
       if (speaking) return;
       const id = setTimeout(() => send("IDLE"), LISTEN_IDLE_MS);
       return () => clearTimeout(id);
     }
-    // 答えが返ったら読み上げて待機へ戻る（§10 spoken_reply を喋る）
+    // 文字回答カードを見せたまま自動で待機へ戻す（読み上げ廃止・2026-09-02）。
+    // 「戻る」「続けて聞く」のどちらかを押せばこのタイマーは次の描画で消える
     if (state === "SPEAKING") {
-      if (!reply) {
-        setCaption("読み上げる答えが空です。");
-        const id = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
-        return () => clearTimeout(id);
-      }
-      const utterance = new SpeechSynthesisUtterance(reply);
-      utterance.lang = "ja-JP";
-      utterance.rate = 1;
-      utterance.volume = 1;
-      let idleId: ReturnType<typeof setTimeout> | undefined;
-      utterance.onstart = () => socketRef.current?.send({ type: "speech.started" });
-      utterance.onend = () => {
-        socketRef.current?.send({ type: "speech.ended" });
-        void microphone.ensureRunning();
-        idleId = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
-      };
-      utterance.onerror = event => {
-        const detail = event.error || "unknown";
-        socketRef.current?.send({ type: "speech.error", detail });
-        setCaption(`音声の読み上げに失敗しました: ${detail}`);
-        void microphone.ensureRunning();
-        idleId = setTimeout(() => send("IDLE"), POST_SPEAK_IDLE_MS);
-      };
-      microphone.preparePlayback();
-      speechSynthesis.resume();
-      speechSynthesis.speak(utterance);
-      const watchdog = setTimeout(() => {
-        socketRef.current?.send({ type: "speech.error", detail: "timeout" });
-        setCaption("音声の読み上げが開始しませんでした。");
-        send("IDLE");
-      }, 45000);
-      return () => {
-        clearTimeout(watchdog);
-        if (idleId) clearTimeout(idleId);
-        speechSynthesis.cancel();
-      };
+      const id = setTimeout(() => { setQa([]); send("IDLE"); }, POST_ANSWER_IDLE_MS);
+      return () => clearTimeout(id);
     }
     if (state === "ERROR") {
       const id = setTimeout(() => send("RETRY"), 5000);
       return () => clearTimeout(id);
     }
-  }, [state, reply, speaking, introDone]);
+  }, [state, speaking]);
 
   async function enableMic() {
     try {
-      // iOS はユーザー操作から離れた Web Speech を開始しないことがある。
-      // このタップの中で無音の発話を一度通し、後のダブルクラップ応答を解禁する。
-      const unlock = new SpeechSynthesisUtterance(".");
-      unlock.lang = "ja-JP";
-      unlock.volume = 0;
-      speechSynthesis.cancel();
-      speechSynthesis.resume();
-      // iOSは音声エンジンの初回起動が完了する前の発話を無音で捨てる
-      // ことがある。準備音の終了を待ってからマイクを開き、最初の
-      // 「なに？」を確実に実スピーカーへ送る。
-      await new Promise<void>(resolve => {
-        let settled = false;
-        const finish = () => { if (!settled) { settled = true; resolve(); } };
-        unlock.onend = finish;
-        unlock.onerror = finish;
-        window.setTimeout(finish, 1200);
-        speechSynthesis.speak(unlock);
-      });
       await microphone.start();
       setMic("on");
       // 画面ロックの解除はユーザー操作の文脈でしか取れないことがある。
@@ -483,6 +440,11 @@ export default function App() {
     }
   }
 
+  // 「戻る」：カードを閉じて待機へ。「続けて聞く」：カードは残したまま
+  // 次の発話を録る（WAKING を経由しない）
+  function closeQa() { setQa([]); send("IDLE"); }
+  function continueQa() { appendQaExchange("", "listening"); send("CONTINUE"); }
+
   async function decideApproval(approve: boolean) {
     if (!approval) return;
     const current = approval;
@@ -491,11 +453,17 @@ export default function App() {
       const result = await response.json() as { summary?: string; spoken_reply?: string };
       if (!response.ok) throw new Error(typeof result.summary === "string" ? result.summary : "APPROVAL FAILED");
       setApproval(null);
-      setCaption(typeof result.summary === "string" ? result.summary : "CHANGE REVIEW COMPLETE");
-      setReply(typeof result.spoken_reply === "string" ? result.spoken_reply : "");
+      const summary = typeof result.summary === "string" && result.summary ? result.summary
+        : typeof result.spoken_reply === "string" ? result.spoken_reply : "CHANGE REVIEW COMPLETE";
+      setCaption(summary);
+      appendQaLines(summary.split("\n").map(line => line.trim()).filter(Boolean));
+      updateLastQa({ phase: "done" });
       send("AGENT_COMPLETED");
     } catch (error) {
-      setCaption(error instanceof Error ? error.message : "APPROVAL FAILED");
+      const message = error instanceof Error ? error.message : "APPROVAL FAILED";
+      setCaption(message);
+      appendQaLine(message);
+      updateLastQa({ phase: "done" });
       send("SYSTEM_ERROR");
     }
   }
@@ -506,10 +474,13 @@ export default function App() {
   const connected = !["BOOTING", "OFFLINE", "ERROR"].includes(view);
   const showDebug = debug || params?.get("debug") === "1";
 
-  // sysmon の右列と同じ3段。上から fetch / dots / 状態（tty-clock の位置）
+  // sysmon の右列と同じ3段。上から fetch / dots / 状態（tty-clock の位置）。
+  // 質問が始まったら1段目を文字回答カードへ差し替える（読み上げ廃止・2026-09-02）
   return <main className={`shell state-${view.toLowerCase()}`}>
     <Ambience state={view} />
-    <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} />
+    {qa.length
+      ? <AnswerCard exchanges={qa} onBack={closeQa} onContinue={continueQa} />
+      : <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} />}
 
     <section className="core-stage panel">
       <LavaCore state={view} />
