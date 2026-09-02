@@ -142,7 +142,12 @@ button { font: inherit; color: inherit }
   75%  { transform: translate(-2px, -1px) }
   100% { transform: translate(0, 0) }
 }
-.shell.state-sleep { animation: oled-drift 120s ease-in-out infinite }
+/* .shell 全体ではなく個々の .panel へ掛ける。iOS のホーム画面PWA(standalone)は
+   position:fixed の祖先に animation で transform を掛け続けると、見た目は
+   ズレていなくてもタップ判定が外れることがある（2026-09-02、実機で ENABLE MIC
+   が Safari タブでは押せるのに standalone だけ反応しなくなった）。
+   .controls は .panel ではないので、これで確実に動かなくなる */
+.state-sleep .panel { animation: oled-drift 120s ease-in-out infinite }
 
 /* 起動: 減光を外し、縁と全面を一気に焚く */
 .scrim-waking { opacity: 0; transition-duration: .2s }

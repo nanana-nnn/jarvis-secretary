@@ -428,14 +428,21 @@ export default function App() {
   }, [state, speaking]);
 
   async function enableMic() {
+    // タップ自体が届いているかを切り分けるための即時マーカー
+    // （2026-09-02、「押しても何も出ない」の原因調査）
+    setCaption("ENABLE MIC を押しました…");
     try {
       await microphone.start();
       setMic("on");
       // 画面ロックの解除はユーザー操作の文脈でしか取れないことがある。
       // マイク許可と同じ操作のうちに取っておく
       setAwake(await wakeLock.enable());
-    } catch {
+    } catch (error) {
+      // 何が失敗したか画面に出す。「押しても何も起きない」の原因切り分けに要る
+      // （2026-09-02、catch で握りつぶしていて原因が見えなかった）
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       setMic("denied");
+      setCaption(`マイクを開始できません: ${detail}`);
       send("SYSTEM_ERROR");
     }
   }
