@@ -219,3 +219,12 @@ def test_missing_daily_still_answers_with_open_tasks(tmp_path: Path) -> None:
     assert "デイリーはまだないよ" in result.summary
     assert "残っている仕事" in result.summary
     assert not (tmp_path / "01_daily").exists()   # AI_RULES「勝手に作らない」
+
+
+def test_clap_fixed_question_gets_the_fast_briefing_path() -> None:
+    """拍手で送る固定質問（なにする？）は Codex の42秒待ちではなく
+    先読み済みのタスク回答へ即座に乗る必要がある（2026-09-02、実測で
+    素通りしていたのを発見）。"""
+    result = route("なにする？")
+    assert result.intent == "ASK"
+    assert result.direct == "tasks"

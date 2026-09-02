@@ -45,7 +45,7 @@ export function AnswerCard(
     <div className="qa-scroll" ref={scrollRef} onScroll={handleScroll}>
       {exchanges.map(exchange => <div className="qa-exchange" key={exchange.id}>
         <p className="qa-prompt">
-          <span className="qa-badge">●</span> {exchange.question || "…"}
+          <span className="qa-badge">▶</span> {exchange.question || "…"}
         </p>
         {exchange.lines.map((line, i) => <p className="qa-line" key={i}>{line}</p>)}
         {exchange.phase !== "done" ? <span className="qa-cursor" aria-hidden="true">█</span> : null}
