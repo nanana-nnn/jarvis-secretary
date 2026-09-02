@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .agent import CodexAgent, LONG_TIMEOUT
 from .audio import SpeechSplitter
+from .briefing import Briefing
 from .config import Settings
 from .router import route
 from .transcribe import Transcriber
@@ -343,6 +344,9 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     # 実行時に load_dotenv で読むので /proc/<pid>/environ には出ない）
     logger.info("[AGENT] %s", agent.command)
     logger.info("[AGENT] sandbox read=%s write=%s", agent.sandbox_read, agent.sandbox_write)
+    # 「今日のタスク」は聞かれる前に作っておく。無くても機械読みが答えるので、
+    # ここが失敗しても会話は成立する（2026-09-02）
+    briefing = Briefing(vault_path, agent)
     pending: dict[str, dict[str, object]] = {}
 
     def operation_log(entry: dict[str, object]) -> None:
@@ -480,15 +484,19 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         app.state.pending = pending
         watcher = asyncio.create_task(watch_scheme())
         telemetry = asyncio.create_task(push_telemetry())
+        briefer = asyncio.create_task(briefing.watch())
         try:
             yield
         finally:
             watcher.cancel()
             telemetry.cancel()
+            briefer.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
             with suppress(asyncio.CancelledError):
                 await telemetry
+            with suppress(asyncio.CancelledError):
+                await briefer
 
     app = FastAPI(title="JARVIS Secretary", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -595,8 +603,23 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                 await emit({"type": "session.sleep", "reason": "system", "ts": timestamp_ms()})
                 return
 
+            # 本人の依頼が来た。裏で走っている先読みは譲る（同時1ジョブなので、
+            # 譲らないと本人が裏の仕事の終わりを待つことになる）
+            briefing.yield_to_user()
+
             # 決まった問いはファイルを読むだけで返す。Codex は実測 42.6 秒かかる
             if decision.direct:
+                # 「今日のタスク」は先読みしてある。あればそれを返す（0秒）。
+                # 無ければ下の機械読みへ落ちる。**どちらでも必ず答えは返る**
+                if decision.direct == "today":
+                    ready = briefing.answer()
+                    if ready is not None:
+                        await emit({
+                            "type": "agent.completed", "intent": decision.intent,
+                            "summary": ready.summary, "spoken_reply": ready.spoken_reply,
+                            "sources": ready.sources, "took": 0, "ts": timestamp_ms(),
+                        })
+                        return
                 found = vault_reader.answer(vault_path, decision.direct)
                 if found is not None:
                     await emit({

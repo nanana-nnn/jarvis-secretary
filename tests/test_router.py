@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from server.router import route
-from server.vault import answer, answer_projects, answer_today
+from server.vault import answer, answer_projects, answer_today, open_tasks
 
 
 def test_system_wins_over_everything() -> None:
@@ -58,7 +58,9 @@ def test_empty_daily_is_not_reported_as_content(tmp_path: Path) -> None:
         "# 2026-08-31\n\n## 記録\n- \n\n## 決めたこと\n- \n", encoding="utf-8")
     result = answer_today(tmp_path, date(2026, 8, 31))
     assert result is not None
-    assert "まだ何も" in result.spoken_reply
+    # 空だと言う。**空欄の `- ` を中身として読み上げない**（ここがこの試験の主旨）
+    assert "空" in result.spoken_reply
+    assert "記録:" not in result.summary
 
 
 def test_daily_content_is_read_from_the_user_sections(tmp_path: Path) -> None:
@@ -132,3 +134,75 @@ def test_stop_words_still_route_to_system_while_busy() -> None:
     """割り込みの口。考えている最中でも「やめて」は SYSTEM へ落ちる必要がある。"""
     for word in ("やめて", "キャンセル", "終わり"):
         assert route(word).intent == "SYSTEM"
+
+
+def _project(folder: Path, name: str, status: str, items: list[str]) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(f"- [ ] {i}" for i in items)
+    (folder / f"{name}.md").write_text(
+        f"---\ntype: project\nstatus: {status}\n---\n\n# {name}\n\n"
+        f"## 次にやること\n{body}\n", encoding="utf-8")
+
+
+def test_open_tasks_only_from_active_projects(tmp_path: Path) -> None:
+    """`status: active` だけを見る。paused / idea は今日の候補ではない。"""
+    projects = tmp_path / "02_projects"
+    _project(projects, "動いてるもの", "active", ["最初の仕事", "次の仕事"])
+    _project(projects, "止めたもの", "paused", ["これは出ない"])
+    _project(projects, "思いつき", "idea", ["これも出ない"])
+    tasks = open_tasks(tmp_path)
+    assert [t.text for t in tasks] == ["最初の仕事", "次の仕事"]
+    assert {t.project for t in tasks} == {"動いてるもの"}
+
+
+def test_open_tasks_skip_finished_items(tmp_path: Path) -> None:
+    """`- [x]` は未完了ではない。終わったものを今日の候補にしない。"""
+    projects = tmp_path / "02_projects"
+    projects.mkdir(parents=True)
+    (projects / "p.md").write_text(
+        "---\nstatus: active\n---\n\n## 次にやること\n"
+        "- [x] 終わった\n- [ ] まだ\n", encoding="utf-8")
+    assert [t.text for t in open_tasks(tmp_path)] == ["まだ"]
+
+
+def test_open_tasks_only_from_the_task_section(tmp_path: Path) -> None:
+    """`## 次にやること` の外にあるチェックボックスは拾わない。
+
+    受け入れ条件や設計メモにも `- [ ]` は出てくる。全部集めると
+    「今日やること」が設計書の目次になる（2026-09-02、実際に混ざっていた）。
+    """
+    projects = tmp_path / "02_projects"
+    projects.mkdir(parents=True)
+    (projects / "p.md").write_text(
+        "---\nstatus: active\n---\n\n"
+        "## 受け入れ条件\n- [ ] これは仕事ではない\n\n"
+        "## 次にやること\n- [ ] これが仕事\n", encoding="utf-8")
+    assert [t.text for t in open_tasks(tmp_path)] == ["これが仕事"]
+
+
+def test_empty_daily_falls_back_to_open_tasks(tmp_path: Path) -> None:
+    """デイリーが空でも「何もありません」で終わらせない。
+
+    朝の欄は空から始まる。そこで打ち切ると「今日のタスクは？」が毎朝使えない
+    （2026-09-02）。続いている仕事のほうを答える。
+    """
+    daily = tmp_path / "01_daily"
+    daily.mkdir(parents=True)
+    (daily / "2026-08-31.md").write_text("# 2026-08-31\n\n## 記録\n- \n", encoding="utf-8")
+    _project(tmp_path / "02_projects", "続いてる企画", "active", ["これをやる"])
+
+    result = answer_today(tmp_path, date(2026, 8, 31))
+    assert result is not None
+    assert "1件" in result.spoken_reply           # 件数を先に言う
+    assert "これをやる" in result.summary
+    assert "02_projects/続いてる企画.md" in result.sources
+
+
+def test_missing_daily_still_answers_with_open_tasks(tmp_path: Path) -> None:
+    """デイリーが無い日でも、続いている仕事は答えられる。勝手に作りはしない。"""
+    _project(tmp_path / "02_projects", "企画", "active", ["残っている仕事"])
+    result = answer_today(tmp_path, date(2026, 8, 31))
+    assert result is not None
+    assert "デイリーはまだありません" in result.summary
+    assert "残っている仕事" in result.summary
+    assert not (tmp_path / "01_daily").exists()   # AI_RULES「勝手に作らない」
