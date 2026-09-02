@@ -201,6 +201,9 @@ button { font: inherit; color: inherit }
   font-size: clamp(9px, 3.4vw, 14px); line-height: 1.6; text-align: left; transition: box-shadow 1.2s ease; }
 .qa-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch }
 .qa-exchange + .qa-exchange { margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
+/* LISTENING 中は質問の1行上に状態を出す（2026-09-02、本人の指定：
+   「なにする？」はLISTENの下に）。agent.started が届くと消える */
+.qa-status { margin: 0 0 2px; color: var(--scheme-outline); font-size: .85em; letter-spacing: .12em }
 /* Starship 風の丸いバッジ。プロンプト行の頭に置く */
 .qa-badge { color: var(--scheme-primary) }
 .qa-prompt { margin: 0 0 4px; color: var(--scheme-text); font-weight: 700; overflow-wrap: anywhere }

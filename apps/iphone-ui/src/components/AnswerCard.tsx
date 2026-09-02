@@ -44,6 +44,7 @@ export function AnswerCard(
   return <section className={`fetch panel qa-card ${done ? "qa-idle" : "qa-active"}`}>
     <div className="qa-scroll" ref={scrollRef} onScroll={handleScroll}>
       {exchanges.map(exchange => <div className="qa-exchange" key={exchange.id}>
+        {exchange.phase === "listening" ? <p className="qa-status">LISTENING</p> : null}
         <p className="qa-prompt">
           <span className="qa-badge">▶</span> {exchange.question || "…"}
         </p>

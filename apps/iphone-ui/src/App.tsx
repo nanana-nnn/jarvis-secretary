@@ -158,9 +158,11 @@ export default function App() {
       if (stateRef.current !== "SLEEP") return;
       // 拍手を会話開始の固定入力としてPCへ送る。マイクで「なに？」を
       // 聞き直す必要がなく、Codexへ即時に渡せる。
+      // カードは LISTENING → 質問 の順で見せる（2026-09-02、本人の指定）。
+      // agent.started が届いた時点で thinking へ切り替わる
       const question = "なにする？";
       socketRef.current?.send({ type: "text.input", text: question });
-      openQaSession(question, "thinking");
+      openQaSession(question, "listening");
       send("CLAP_DETECTED");
     },
     next => {
