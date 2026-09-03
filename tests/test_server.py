@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import os
 import re
 
@@ -57,6 +58,31 @@ def test_scheme_primary_is_sent_on_connect(tmp_path: Path) -> None:
             assert event["scheme"]["mode"] == "light"
             assert event["scheme"]["primary"] == "#1b696f"
             receive_until(socket, "system.telemetry")
+
+
+def test_terminal_colours_are_optional_and_never_break_the_scheme(tmp_path: Path) -> None:
+    """端末色（term0/3/6/7/12）は任意。揃っていれば配り、壊れていても
+    Material 側の配色は配る（画面全体が無色に落ちないため・2026-09-02）"""
+    base = {
+        "background": "f6fafa", "surfaceContainer": "e7eff0", "surfaceContainerHigh": "e1eaeb",
+        "onSurface": "2a3435", "onSurfaceVariant": "566162", "outlineVariant": "a9b4b5",
+        "primary": "1b696f", "onPrimary": "e8fdff", "error": "a83836",
+    }
+    scheme = tmp_path / "scheme.json"
+
+    scheme.write_text(json.dumps({"mode": "light", "colours": base}), encoding="utf-8")
+    result = read_scheme(scheme)
+    assert result is not None and "term3" not in result
+
+    scheme.write_text(json.dumps({"mode": "light", "colours": {
+        **base, "term0": "14171A", "term3": "f1c21b", "term6": "not-a-colour",
+    }}), encoding="utf-8")
+    result = read_scheme(scheme)
+    assert result is not None
+    assert result["primary"] == "#1b696f"
+    assert result["term0"] == "#14171a"      # 小文字に揃えて配る
+    assert result["term3"] == "#f1c21b"
+    assert "term6" not in result             # 壊れた1色を落としても全体は生きる
 
 
 def test_invalid_or_missing_scheme_falls_back_to_none(tmp_path: Path) -> None:

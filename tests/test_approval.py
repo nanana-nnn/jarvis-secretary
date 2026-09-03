@@ -6,6 +6,8 @@
 ここではそこへ提案を1件入れ、エンドポイントの実物を叩いて Vault の中身を見る。
 """
 from pathlib import Path
+import asyncio
+from functools import wraps
 import json
 import subprocess
 
@@ -13,6 +15,14 @@ from fastapi.testclient import TestClient
 
 from server.app import create_app, dirty_paths
 from server.config import Settings
+
+
+def _sync(test):
+    """非同期のテストを普通のテストとして回す（tests/test_briefing.py と同じ理由）。"""
+    @wraps(test)
+    def run(*args, **kwargs):
+        return asyncio.run(test(*args, **kwargs))
+    return run
 
 
 NO_SCHEME = Path("/nonexistent/scheme.json")
@@ -209,6 +219,20 @@ def test_sandbox_values_come_from_the_environment(monkeypatch) -> None:
     assert swapped.command.startswith("cd {cwd} && claude")
 
 
+def test_resume_command_comes_from_the_environment(monkeypatch) -> None:
+    """AGENT_CMD を差し替えるとき、AGENT_RESUME_CMD も別に差し替えられること。
+    既定は codex 用のままなので、Claude Code へ乗り換えるときは両方書き換える必要がある"""
+    from server.agent import CodexAgent, DEFAULT_RESUME_CMD
+
+    monkeypatch.delenv("AGENT_RESUME_CMD", raising=False)
+    default = CodexAgent(Path("/tmp/vault"))
+    assert default.resume_command == DEFAULT_RESUME_CMD
+
+    monkeypatch.setenv("AGENT_RESUME_CMD", "claude -p --continue --output-format text > {out_file}")
+    swapped = CodexAgent(Path("/tmp/vault"))
+    assert swapped.resume_command.startswith("claude -p --continue")
+
+
 def test_answer_survives_a_code_fence_or_a_stray_sentence(tmp_path: Path) -> None:
     """形は合っているのに1文字の余分で提案ごと捨てるのは損。
     --output-schema を持たない CLI では前後に文が付きやすい。"""
@@ -248,3 +272,61 @@ def test_unusable_output_still_reports_why(tmp_path: Path) -> None:
     result = CodexAgent._parse(out)
     assert result.error is not None
     assert "できませんでした" in result.error
+
+
+# 会話の続き（2026-09-03）。ブートストラップと resume で別々のコマンドが
+# 呼ばれることを、実際にサブプロセスを起動して確かめる。
+# 中身に { } を含む JSON を書くコマンドは .format() の置換対象と衝突するので
+# {{ }} で二重に括る（DEFAULT_CODEX_CMD 側は codex 自身の出力なのでこの問題が無い）
+_BOOTSTRAP_CMD = "printf '%s' '{{\"summary\":\"boot\",\"spoken_reply\":\"boot\",\"sources\":[]}}' > {out_file}"
+_RESUME_CMD = "printf '%s' '{{\"summary\":\"resume\",\"spoken_reply\":\"resume\",\"sources\":[]}}' > {out_file}"
+_FAIL_CMD = "exit 1"
+
+
+@_sync
+async def test_second_read_only_turn_resumes_the_session(tmp_path: Path) -> None:
+    """1回目はブートストラップ、2回目以降は resume を呼ぶ（本人の指定・2026-09-03：
+    「タスク教えて」のあと「じゃあ1件目やって」のように話しかけられるように）。"""
+    from server.agent import CodexAgent
+
+    agent = CodexAgent(tmp_path, command=_BOOTSTRAP_CMD, resume_command=_RESUME_CMD)
+    assert agent._session_started is False
+
+    first = await agent.run("今日のタスク教えて", "read_only", use_session=True)
+    assert first.summary == "boot"
+    assert agent._session_started is True
+
+    second = await agent.run("じゃあ1件目やって", "read_only", use_session=True)
+    assert second.summary == "resume"
+
+
+@_sync
+async def test_propose_write_never_resumes(tmp_path: Path) -> None:
+    """propose_write は毎回ちがう使い捨てコピーが作業ディレクトリになるので、
+    use_session=True を渡しても resume の対象にしない。"""
+    from server.agent import CodexAgent
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    agent = CodexAgent(vault, command=_BOOTSTRAP_CMD, resume_command=_RESUME_CMD)
+    agent._session_started = True   # 会話が既に始まっている状態を作る
+
+    result = await agent.run("直して", "propose_write", use_session=True)
+    assert result.summary == "boot"   # resume ではなく毎回ブートストラップ
+
+
+@_sync
+async def test_a_lost_session_falls_back_to_bootstrap_next_time(tmp_path: Path) -> None:
+    """resume 先のセッションが失われて失敗したら、次回はブートストラップからやり直す。
+    直さないと、一度失われたセッションへ永遠に resume し続けて壊れたままになる。"""
+    from server.agent import CodexAgent
+
+    agent = CodexAgent(tmp_path, command=_BOOTSTRAP_CMD, resume_command=_FAIL_CMD)
+    agent._session_started = True   # resume 先が既に無い状態を再現する
+
+    failed = await agent.run("続き", "read_only", use_session=True)
+    assert failed.error is not None
+    assert agent._session_started is False
+
+    recovered = await agent.run("続き", "read_only", use_session=True)
+    assert recovered.summary == "boot"

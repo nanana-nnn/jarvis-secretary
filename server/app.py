@@ -55,6 +55,14 @@ SCHEME_KEYS = (
     "onPrimary",
     "error",
 )
+# 端末のANSI色（caelestia の scheme.json が壁紙から作る term0〜term15）。
+# 文字回答カードのプロンプト行は starship.toml と同じ配色にするので、
+# Material トークンではなくこちらを使う（2026-09-02、本人の指定
+# 「実際のターミナルと同じように」）。使うのは starship が指定している5色。
+#   term0=black / term3=yellow / term6=cyan / term7=white / term12=bright-blue
+# **任意扱いにする。** 揃っていなくても Material 側の配色は配れるようにして、
+# 端末色が無い環境で画面全体が無色に落ちないようにする
+TERM_KEYS = ("term0", "term3", "term6", "term7", "term12")
 
 
 def timestamp_ms() -> int:
@@ -86,6 +94,11 @@ def read_scheme(path: Path) -> dict[str, str] | None:
         if not isinstance(value, str) or not HEX_COLOUR.fullmatch(value):
             return None
         scheme[key] = f"#{value.lower()}"
+    # 端末色は任意。欠けていても Material 側は配る（画面が無色に落ちないように）
+    for key in TERM_KEYS:
+        value = colours.get(key)
+        if isinstance(value, str) and HEX_COLOUR.fullmatch(value):
+            scheme[key] = f"#{value.lower()}"
     return scheme
 
 
@@ -662,7 +675,8 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             # （2026-09-02。長い仕事ほど、途中で違うと気づいたとき止めたくなる）
             nonlocal agent_task
             agent_task = asyncio.create_task(
-                agent.run(text, decision.mode, timeout=LONG_TIMEOUT if decision.long else None))
+                agent.run(text, decision.mode, timeout=LONG_TIMEOUT if decision.long else None,
+                          use_session=True))
             try:
                 while True:
                     done, _ = await asyncio.wait({agent_task}, timeout=PROGRESS_EVERY_S)

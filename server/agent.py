@@ -45,6 +45,19 @@ DEFAULT_CODEX_CMD = (
     "--skip-git-repo-check -"
 )
 
+# 会話の続き（2026-09-03、本人の指定：手を叩く→codex→obsidian→なにする？の
+# あと、返事が続けて同じ会話として続くようにする）。
+# `codex exec resume --last` は --sandbox/--cd を取らない（resume はセッションを
+# 作った時点の設定をそのまま使う。§10 の安全側の決めごとはブートストラップ側の
+# コマンドで一度固定すれば以降も効いたまま）。propose_write は毎回ちがう
+# 使い捨てコピーが作業ディレクトリになるので、resume の対象にしない
+# （run() の use_session は mode=="read_only" のときだけ効く）
+DEFAULT_RESUME_CMD = (
+    "codex exec resume --last "
+    "--output-schema {schema_file} --output-last-message {out_file} "
+    "--skip-git-repo-check -"
+)
+
 # {sandbox} に入れる値。codex は --sandbox の引数だが、他の CLI では別の
 # フラグになる（Claude Code なら --allowedTools / --permission-mode）。
 # コード側に残っていた唯一の codex 固有部分なので .env から差し替えられるようにする。
@@ -115,21 +128,34 @@ def build_prompt(text: str, mode: str) -> str:
 class CodexAgent:
     """Codex CLI を非対話で回す。同時実行は1つに絞る（§10）。"""
 
-    def __init__(self, vault: Path, command: str | None = None, timeout: int = DEFAULT_TIMEOUT) -> None:
+    def __init__(self, vault: Path, command: str | None = None, resume_command: str | None = None,
+                 timeout: int = DEFAULT_TIMEOUT) -> None:
         self.vault = vault
         # AGENT_CMD が新しい名前。CODEX_CMD は既存の .env をそのまま動かすため残す
         self.command = command or os.getenv("AGENT_CMD") or os.getenv("CODEX_CMD") or DEFAULT_CODEX_CMD
+        self.resume_command = resume_command or os.getenv("AGENT_RESUME_CMD") or DEFAULT_RESUME_CMD
         self.sandbox_read = os.getenv("AGENT_SANDBOX_READ") or DEFAULT_SANDBOX_READ
         self.sandbox_write = os.getenv("AGENT_SANDBOX_WRITE") or DEFAULT_SANDBOX_WRITE
         self.timeout = timeout
         self._lock = asyncio.Lock()
+        # このサーバー起動中に、会話用のセッションを一度でも作れたか。
+        # まだなら resume を試さずブートストラップ側で作る（無いものを resume
+        # すると失敗するため）。サーバーを再起動すると新しい会話として始まる
+        self._session_started = False
 
-    async def run(self, text: str, mode: str = "read_only", timeout: int | None = None) -> AgentResult:
-        """timeout を渡すとこの1回だけ持ち時間を変える（記事執筆や調べ物は分単位かかる）。"""
+    async def run(self, text: str, mode: str = "read_only", timeout: int | None = None,
+                  use_session: bool = False) -> AgentResult:
+        """timeout を渡すとこの1回だけ持ち時間を変える（記事執筆や調べ物は分単位かかる）。
+
+        use_session=True で、直前の会話の続きとして投げる（2026-09-03）。
+        read_only 以外（propose_write は毎回使い捨てコピーが作業ディレクトリに
+        なる）では効かない。先読みブリーフィング（briefing.py）はここを
+        False のままにして、本人の会話へ割り込ませない。
+        """
         async with self._lock:                      # §10「同時実行は1ジョブ」
-            return await self._run(text, mode, timeout or self.timeout)
+            return await self._run(text, mode, timeout or self.timeout, use_session and mode == "read_only")
 
-    async def _run(self, text: str, mode: str, timeout: int) -> AgentResult:
+    async def _run(self, text: str, mode: str, timeout: int, use_session: bool) -> AgentResult:
         work = Path(tempfile.mkdtemp(prefix="jarvis-agent-"))
         prompt_file = work / "prompt.txt"
         schema_file = work / "schema.json"
@@ -152,7 +178,9 @@ class CodexAgent:
                 return AgentResult("", "", error=f"AGENT_FAILED: proposal copy ({exc})")
             cwd = proposed_root
 
-        command = self.command.format(
+        resuming = use_session and self._session_started
+        template = self.resume_command if resuming else self.command
+        command = template.format(
             sandbox=self.sandbox_read if mode == "read_only" else self.sandbox_write,
             cwd=shlex.quote(str(cwd)),
             prompt_file=shlex.quote(str(prompt_file)),
@@ -184,6 +212,10 @@ class CodexAgent:
                 raise
 
             if process.returncode != 0:
+                if resuming:
+                    # resume 先のセッションが失われている（サーバー外で codex の
+                    # 保存が消えた等）。次回はブートストラップからやり直す
+                    self._session_started = False
                 tail = (stderr or b"").decode("utf-8", "ignore").strip().splitlines()[-3:]
                 shutil.rmtree(work, ignore_errors=True)
                 proposed_root = None
@@ -205,6 +237,8 @@ class CodexAgent:
                 if not outcome.changed_files:
                     outcome.proposed_root = None
                     shutil.rmtree(work, ignore_errors=True)
+            if use_session and not outcome.error:
+                self._session_started = True
             return outcome
         except OSError as exc:
             shutil.rmtree(work, ignore_errors=True)
