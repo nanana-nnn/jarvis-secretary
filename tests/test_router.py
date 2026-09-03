@@ -221,14 +221,15 @@ def test_missing_daily_still_answers_with_open_tasks(tmp_path: Path) -> None:
     assert not (tmp_path / "01_daily").exists()   # AI_RULES「勝手に作らない」
 
 
-def test_spoken_task_request_goes_through_codex() -> None:
-    """口で頼んだ「タスク教えて」は先読みキャッシュへ即座に乗せず、
-    毎回 Codex を実際に起動して Vault を読ませる（2026-09-02、本人の指定）。
+def test_spoken_task_request_is_answered_directly() -> None:
+    """口で頼んだ「タスク教えて」も先読みキャッシュで即答する（2026-09-03、本人の指定）。
 
-    経緯：一度は「先読みへ即答させるべき」と直したが本人はそれを望んでいなかった。
-    さらに拍手時にこの文を固定でPCへ送る実装も入れたが、これも取り下げた
-    （拍手は起こすだけ。何を頼むかは実際に聞いてから決まる）。
+    経緯：2026-09-02 は逆に「毎回 Codex を実際に起動する」を本人が選んだ
+    （直答リストが「今日のタスク」等の固定言い回ししか拾えず、「タスク教えて」は
+    ASK の既定へ落ちて Codex 行きになっていた。当時はそれが望みだった）。
+    2026-09-03、聞き終わりから表示まで実測約30秒のラグとして問題になり、
+    直答表に「タスク教えて」等を足して即答へ戻した。前回の理由は記録が無い。
     """
     result = route("タスク教えて")
     assert result.intent == "ASK"
-    assert result.direct is None
+    assert result.direct == "tasks"
