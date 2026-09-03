@@ -13,6 +13,14 @@
   --scheme-bg: #f6fafa; --scheme-surface: #e7eff0; --scheme-surface-high: #e1eaeb;
   --scheme-text: #2a3435; --scheme-muted: #566162; --scheme-outline: #a9b4b5;
   --scheme-primary: #1b696f; --scheme-on-primary: #e8fdff; --scheme-error: #a83836;
+  /* 端末のANSI色。文字回答カードのプロンプト行を ~/.config/starship.toml と
+     同じ配色にするために使う（2026-09-02、本人の指定「実際のターミナルと
+     同じように」）。サーバーが caelestia の scheme.json から term0/3/6/7/12 を
+     配り、届いたぶんだけ App.tsx が上書きする。
+     **ここの既定値は消さない。** 端末色が届かない環境でも、プロンプト行が
+     無色にならないようにするための受け皿 */
+  --term-black: #14171a; --term-yellow: #f1c21b; --term-cyan: #1fb6c9;
+  --term-white: #e8f2f3; --term-blue: #4e9eff;
   --mono: "JBMono Nerd", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   /* PC と同じ壁紙。サーバーが縮めて配り、変わると差し替わる */
   --wallpaper: none;
@@ -189,7 +197,11 @@ button { font: inherit; color: inherit }
 /* 1段目: fastfetch。ロゴも枠も37桁なので、37桁が画面幅に収まる字送りで頭打ちにする
    （37 * 0.6em * 15px = 333px < 366px）。
    min-height:0 と overflow:hidden で、段の高さを超えたぶんは切る（伸ばさない） */
-.fetch { display: grid; justify-items: center; align-content: center; gap: 4px; padding: 8px 6px;
+.fetch { display: grid; align-content: center; padding: 8px 6px; min-height: 0 }
+/* 高さの切り落としは内側の .fetch-clip が持つ。
+   **.fetch 自身に overflow:hidden を置かないこと。** 置くと .card-glow の
+   発光層（::before, inset:-4px）まで一緒に切られ、光が消える（2026-09-02） */
+.fetch-clip { display: grid; justify-items: center; gap: 4px; width: 100%;
   min-height: 0; overflow: hidden;
   font-size: clamp(8px, 3.9vw, 16px); line-height: 1.24; white-space: pre }
 /* pre は UA 既定の font-family: monospace が継承より強いので、明示的に当て直す。
@@ -203,11 +215,7 @@ button { font: inherit; color: inherit }
    高さは 1fr のグリッド段そのまま（他の2段と同じ枠）で固定にする。
    出力中に伸び縮みしないのは中を .qa-scroll で内部スクロールにしているため */
 .qa-card { position: relative; display: flex; flex-direction: column; padding: 10px 12px; height: 100%;
-  font-size: clamp(9px, 3.4vw, 14px); line-height: 1.6; text-align: left;
-  --qa-glow: var(--scheme-primary); }
-/* Obsidian の実プロセスが動いているあいだは紫にする（本人の指定）。
-   点灯はすべて実測（live.apps.obsidian.alive）で、飾りで紫にしない */
-.qa-obsidian { --qa-glow: #9b6bff; }
+  font-size: clamp(9px, 3.4vw, 14px); line-height: 1.6; text-align: left }
 .qa-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch }
 .qa-exchange + .qa-exchange { margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
 
@@ -222,36 +230,66 @@ button { font: inherit; color: inherit }
   display: inline-flex; align-items: center; gap: .3em; padding: 1px 7px; border-radius: 5px;
   font-weight: 700;
 }
-.qa-duration { background: #f1c21b; color: #14171a }
+.qa-duration { background: var(--term-yellow); color: var(--term-black) }
 .qa-dir { color: var(--scheme-text); font-weight: 700 }
-.qa-dir b { background: #1fb6c9; margin-left: 4px }
-.qa-sep { color: #4e9eff; font-weight: 700 }
+.qa-dir b { background: var(--term-cyan); color: var(--term-black); margin-left: 4px }
+.qa-sep { color: var(--term-blue); font-weight: 700 }
 /* Starship 風の丸いバッジ。プロンプト行の頭に置く */
-.qa-badge { color: var(--scheme-text); font-weight: 700 }
+.qa-badge { color: var(--term-white); font-weight: 700 }
 .qa-prompt { margin: 0 0 4px; color: var(--scheme-text); font-weight: 700; overflow-wrap: anywhere }
 .qa-line { margin: 2px 0; color: var(--scheme-muted); white-space: pre-wrap; overflow-wrap: anywhere }
 .qa-cursor { color: var(--scheme-primary); animation: qa-blink 1s steps(2, start) infinite }
 @keyframes qa-blink { 50% { opacity: 0 } }
 
-/* 聞き取り開始〜回答表示完了は、縁・背景・外側のぼかしを壁紙テーマ色で
-   約2.5秒周期に明暗させる（回転する縁は使わない。§7の amb-ring とは別物）。
-   box-shadow を .qa-card 自身に置くと、.panel の backdrop-filter と重なって
+/* 1段目の発光。聞き取り開始〜回答表示完了のあいだ、縁と外側のぼかしを
+   壁紙テーマ色で約2.5秒周期に明暗させる（回転する縁は使わない。
+   §7の amb-ring とは別物）。
+   box-shadow を カード自身に置くと .panel の backdrop-filter と重なって
    実機で光がほぼ見えなかった（2026-09-02）。::before を専用の発光層にして
-   .qa-card の背面へ独立して置く方式へ変更。色は --qa-glow（既定は
-   --scheme-primary、Obsidian接続中は紫）を使う */
-.qa-active::before, .qa-idle::before {
+   カードの背面へ独立して置く方式にしてある。
+   **fastfetch と文字回答カードで同じクラスを使う。** 聞いているあいだは
+   1段目を fastfetch のままにする（本人の指定：聞いている間は上のカードを
+   変えない）ので、答えを出すときカードが同じ光をそのまま引き継ぐ */
+.card-glow { position: relative; --qa-glow: var(--scheme-primary) }
+/* Obsidian の実プロセスが動いているあいだは紫にする（本人の指定）。
+   点灯はすべて実測（live.apps.obsidian.alive）で、飾りで紫にしない。
+   完了色（.glow-idle）はこれより後ろに書いてあるので、完了時はそちらが勝つ */
+.glow-obsidian { --qa-glow: #9b6bff }
+.glow-sweep::before, .glow-active::before, .glow-idle::before {
   content: ""; position: absolute; inset: -4px; z-index: -1;
   border-radius: 22px; pointer-events: none;
 }
-.qa-active { border: 1px solid var(--qa-glow) }
-.qa-active::before { animation: qa-breathe 2.5s ease-in-out infinite }
+/* 拍手直後：光が縁を1周してから呼吸に切り替わる（本人の指定・2026-09-03）。
+   conic-gradient の「彗星」をリング状にマスクして回す。二重マスクのXORで
+   帯を作る一般的な手法（-webkit-mask-composite: xor が Safari 向け）。
+   1周で終わり（forwards は付けない。JS が SWEEP_MS 後に glow-active へ
+   クラスごと差し替える。App.tsx の SWEEP_MS とここの 1.1s は必ず揃える）*/
+.glow-sweep::before {
+  padding: 2px;
+  background: conic-gradient(from 0deg, transparent 0deg, var(--qa-glow) 60deg, transparent 150deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: qa-sweep 1.1s linear 1;
+}
+@keyframes qa-sweep { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+/* 枠線は無し（本人の指定・2026-09-03）。発光だけで状態を示す */
+.glow-active::before { animation: qa-breathe 2.5s ease-in-out infinite }
 @keyframes qa-breathe {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--qa-glow) 0%, transparent) }
   50%      { box-shadow: 0 0 26px 6px color-mix(in srgb, var(--qa-glow) 55%, transparent) }
 }
-/* 完了：呼吸を止め、弱い常時発光へ落ち着かせる */
-.qa-idle { border: 1px solid color-mix(in srgb, var(--qa-glow) 35%, transparent) }
-.qa-idle::before { box-shadow: 0 0 16px 3px color-mix(in srgb, var(--qa-glow) 30%, transparent) }
+/* 完了：呼吸中と見分けが付くよう、色を緑に変えてから弱い常時発光へ落ち着かせる
+   （本人の指定・2026-09-03。「暗くなっただけ」では完了と分かりにくかった）。
+   Obsidian中でも完了は緑にする。「今どこと繋がっているか」より
+   「終わったこと」を優先して伝える */
+.glow-idle { --qa-glow: #34d399 }
+.glow-idle::before { animation: qa-complete .6s ease-out 1 forwards }
+@keyframes qa-complete {
+  0%   { box-shadow: 0 0 34px 8px color-mix(in srgb, var(--qa-glow) 70%, transparent) }
+  100% { box-shadow: 0 0 16px 3px color-mix(in srgb, var(--qa-glow) 30%, transparent) }
+}
 
 .qa-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }

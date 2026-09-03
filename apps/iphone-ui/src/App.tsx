@@ -25,6 +25,9 @@ const LISTEN_IDLE_MS = 20000;
 const POST_ANSWER_IDLE_MS = 20000;
 const SNAP_TAIL_MS = 450;          // 拍手の余韻が消えるまで録音を待つ
 const HEARD_NOTHING_MS = 5000;     // 「聞き取れませんでした」を見せてから待機へ戻すまで
+// 拍手直後、光が縁を1周してから呼吸に切り替わるまで（本人の指定・2026-09-03）。
+// style.css の qa-sweep の 1.1s と必ず揃える
+const SWEEP_MS = 1100;
 
 // サーバーから来る差し色を検査する。信頼せずに形だけ見る。
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -53,6 +56,22 @@ const schemeVariables: Record<Exclude<keyof Scheme, "mode">, string> = {
   primary: "--scheme-primary",
   onPrimary: "--scheme-on-primary",
   error: "--scheme-error",
+};
+
+/**
+ * 端末のANSI色。文字回答カードのプロンプト行を `~/.config/starship.toml` と
+ * 同じ配色にするために使う（2026-09-02、本人の指定「実際のターミナルと
+ * 同じように」）。caelestia が壁紙から作る term0〜term15 の一部で、
+ * 壁紙を変えるとこちらも変わる。
+ * **任意扱い。** 届かなければ CSS 側の既定値のままにする（既定値は
+ * :root にあり、Material トークンから作ってあるので無色にはならない）
+ */
+const termVariables: Record<string, string> = {
+  term0: "--term-black",
+  term3: "--term-yellow",
+  term6: "--term-cyan",
+  term7: "--term-white",
+  term12: "--term-blue",
 };
 
 /**
@@ -227,6 +246,15 @@ export default function App() {
             document.documentElement.dataset.theme = scheme.mode;
             for (const [key, variable] of Object.entries(schemeVariables)) {
               document.documentElement.style.setProperty(variable, String(scheme[key as keyof Scheme]));
+            }
+            // 端末のANSI色は任意。届いたものだけ差し替える（届かなければ
+            // CSS の既定値のまま。プロンプト行が無色にならないようにする）
+            const raw = scheme as unknown as Record<string, unknown>;
+            for (const [key, variable] of Object.entries(termVariables)) {
+              const value = raw[key];
+              if (typeof value === "string" && HEX.test(value)) {
+                document.documentElement.style.setProperty(variable, value);
+              }
             }
             // Safari はツールバーと status bar をこの色で塗る。固定値のままだと
             // 配色と合わず、画面の下に黒い帯が残る（2026-08-31、実機で約1cm）
@@ -509,6 +537,27 @@ export default function App() {
     }
   }
 
+  // 聞いているあいだは1段目を fastfetch のままにして、呼吸だけ乗せる
+  // （本人の指定：聞いている間は上のカードを変えない）。文字回答カードへ
+  // 差し替えるのは、聞き取れた質問が入ってから（audio.final で question が
+  // 埋まる／拍手起動の固定質問はそこで phase が thinking になる）。
+  // セッション自体は WAKING で開いたままにする。ここで作り直すと
+  // agent.started などが更新する相手を失う
+  const listening = qa.length === 1 && qa[0].phase === "listening" && !qa[0].question && !qa[0].lines.length;
+
+  // 聞き始めた瞬間だけ「光が縁を1周」を出し、そのあと呼吸へ渡す
+  // （本人の指定・2026-09-03）。listening が false→true になった時だけ立てる。
+  // listening が続くあいだずっと true のままにすると、話し終わって
+  // AnswerCard へ切り替わる直前に再描画されても1周が再生されてしまうため、
+  // SWEEP_MS で確実に自分から false へ戻す
+  const [sweeping, setSweeping] = useState(false);
+  useEffect(() => {
+    if (!listening) { setSweeping(false); return; }
+    setSweeping(true);
+    const id = setTimeout(() => setSweeping(false), SWEEP_MS);
+    return () => clearTimeout(id);
+  }, [listening]);
+
   const preview = params?.get("state")?.toUpperCase() as SecretaryState | undefined;
   const view = preview && preview in copy ? preview : state;
   const content = copy[view];
@@ -519,10 +568,10 @@ export default function App() {
   // 質問が始まったら1段目を文字回答カードへ差し替える（読み上げ廃止・2026-09-02）
   return <main className={`shell state-${view.toLowerCase()}`}>
     <Ambience state={view} />
-    {qa.length
+    {qa.length && !listening
       ? <AnswerCard exchanges={qa} onBack={closeQa} onContinue={continueQa}
           obsidianActive={Boolean(live.apps.obsidian?.alive)} />
-      : <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} />}
+      : <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} glow={listening} sweep={sweeping} />}
 
     <section className="core-stage panel">
       <LavaCore state={view} />

@@ -9,6 +9,13 @@ describe("secretary state machine", () => {
     expect(transition("WAKING", "WAKE_FINISHED")).toBe("LISTENING");
   });
   it("moves every state offline on disconnect", () => expect(transition("THINKING", "DISCONNECTED")).toBe("OFFLINE"));
+
+  it("拍手直後、WAKE_FINISHED より先に聞き取り失敗が届いても AWAKENING で固まらない", () => {
+    // STT_FAILED は5秒後に IDLE を送る（App.tsx）。WAKE_FINISHED が来る前に
+    // それが WAKING へ届くケースがあり、行き先が無いと画面がそこで固まる
+    // （2026-09-03、実機で確認）
+    expect(transition("WAKING", "IDLE")).toBe("SLEEP");
+  });
 });
 
 describe("行き止まりがないこと", () => {

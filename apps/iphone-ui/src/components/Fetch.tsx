@@ -59,11 +59,28 @@ function row(icon: string, label: string, value: string): string {
   return `│ ${icon}  ${label.padEnd(LABEL)}  ${shown.padStart(VALUE)} │`;
 }
 
-export function Fetch({ facts, link }: { facts: Facts; link: string }) {
+/**
+ * `glow` は聞き取り中の呼吸（2026-09-02）。LISTENING のあいだ 1段目は
+ * このカードのままにする（本人の指定：聞いている間は上のカードを変えない）
+ * ので、呼吸の演出だけをここへ乗せる。答えを出すときは AnswerCard 側が
+ * 同じ見た目を引き継ぐ。
+ *
+ * `sweep` は聞き始めた瞬間だけ true になり、光が縁を1周してから呼吸へ渡す
+ * （本人の指定・2026-09-03）。sweep が立っているあいだは glow-active を
+ * 出さない（両方同時に付けると呼吸と1周が重なって喧嘩する）。
+ */
+export function Fetch(
+  { facts, link, glow, sweep }: { facts: Facts; link: string; glow?: boolean; sweep?: boolean },
+) {
   const body = ROWS.map(({ key, icon }) => row(icon, key, String(facts[key]))).join("\n");
-  return <section className="fetch panel" aria-label="JARVIS system information">
-    <pre className="fetch-logo">{LOGO}</pre>
-    <pre className="fetch-box">{`╭${LINE}╮\n${body}\n╰${LINE}╯`}</pre>
+  const glowClass = sweep ? "glow-sweep" : glow ? "glow-active" : "";
+  return <section className={`fetch panel card-glow ${glowClass}`} aria-label="JARVIS system information">
+    {/* 高さの切り落としは この内側の div が持つ。section 側で overflow:hidden に
+        すると .card-glow の発光層まで切られて光が消える（style.css .fetch-clip）*/}
+    <div className="fetch-clip">
+      <pre className="fetch-logo">{LOGO}</pre>
+      <pre className="fetch-box">{`╭${LINE}╮\n${body}\n╰${LINE}╯`}</pre>
+    </div>
     <span className="sr-only">link {link}</span>
   </section>;
 }

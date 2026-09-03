@@ -56,7 +56,7 @@ export function AnswerCard(
     return () => window.clearInterval(id);
   }, [done]);
 
-  return <section className={`fetch panel qa-card ${done ? "qa-idle" : "qa-active"} ${obsidianActive ? "qa-obsidian" : ""}`}>
+  return <section className={`fetch panel qa-card card-glow ${done ? "glow-idle" : "glow-active"} ${obsidianActive ? "glow-obsidian" : ""}`}>
     <div className="qa-scroll" ref={scrollRef} onScroll={handleScroll}>
       {exchanges.map(exchange => {
         const elapsed = Math.max(0, Math.round((Date.now() - exchange.startedAt) / 1000));
