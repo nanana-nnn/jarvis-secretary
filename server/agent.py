@@ -31,6 +31,8 @@ import shlex
 import shutil
 import tempfile
 
+from .terminal import VisibleTerminal
+
 logger = logging.getLogger("uvicorn.error")
 
 # `codex exec --help`（2026-08-31 確認）で確定した形。
@@ -58,17 +60,11 @@ DEFAULT_RESUME_CMD = (
     "--skip-git-repo-check -"
 )
 
-# 作業がPC画面で見える端末（2026-09-04、本人の指定：「話しかける→PC画面で
-# 勝手に作業する様子が見える→結果だけスマホに返る」をSNS映えのため必須にする）。
-# codex 自体をターミナル内で直接動かす（headless実行の代わり）。
-# {shell_cmd} には、実際に投げる codex コマンド＋標準入力のリダイレクトを
-# まとめて1本の文字列で渡す（foot は自身がシェルではなく、渡された1コマンドを
-# そのまま起動するだけなので、リダイレクトが要るならシェル越しに渡す必要がある）。
-# `--output-last-message {out_file}` は引き続き効くので、画面に見せながら
-# 構造化JSONも同時に受け取れる。
-# 失う物：stderr を個別に捕まえられなくなる（画面に出るだけになる）ので、
-# 失敗時の理由表示は out_file が読めたかどうかだけに落ちる（§17 は維持できる）
-DEFAULT_TERMINAL_CMD = "foot --working-directory {cwd} bash -c {shell_cmd}"
+# 作業がPC画面で見える実行は server/terminal.py（常駐ターミナル1枚）が持つ。
+# `--output-last-message {out_file}` は変わらず効くので、画面に見せながら
+# 構造化JSONも受け取れる。
+# 失う物：stderr を個別に捕まえられない（画面に出るだけ）ので、失敗時の
+# 理由表示は「終了コードと out_file が読めたか」に落ちる（§17 は維持できる）
 
 # {sandbox} に入れる値。codex は --sandbox の引数だが、他の CLI では別の
 # フラグになる（Claude Code なら --allowedTools / --permission-mode）。
@@ -141,13 +137,12 @@ class CodexAgent:
     """Codex CLI を非対話で回す。同時実行は1つに絞る（§10）。"""
 
     def __init__(self, vault: Path, command: str | None = None, resume_command: str | None = None,
-                 terminal_command: str | None = None, visible: bool | None = None,
+                 terminal: "VisibleTerminal | None" = None, visible: bool | None = None,
                  timeout: int = DEFAULT_TIMEOUT) -> None:
         self.vault = vault
         # AGENT_CMD が新しい名前。CODEX_CMD は既存の .env をそのまま動かすため残す
         self.command = command or os.getenv("AGENT_CMD") or os.getenv("CODEX_CMD") or DEFAULT_CODEX_CMD
         self.resume_command = resume_command or os.getenv("AGENT_RESUME_CMD") or DEFAULT_RESUME_CMD
-        self.terminal_command = terminal_command or os.getenv("AGENT_TERMINAL_CMD") or DEFAULT_TERMINAL_CMD
         self.sandbox_read = os.getenv("AGENT_SANDBOX_READ") or DEFAULT_SANDBOX_READ
         self.sandbox_write = os.getenv("AGENT_SANDBOX_WRITE") or DEFAULT_SANDBOX_WRITE
         # 既定はPC画面に見える実行（2026-09-04、本人の指定）。テストや
@@ -157,6 +152,8 @@ class CodexAgent:
             env = os.getenv("AGENT_VISIBLE")
             visible = env != "0" if env is not None else True
         self.visible = visible
+        # 常駐ターミナルは1枚を使い回す（閉じられていたら次の依頼で開き直す）
+        self.terminal = terminal or (VisibleTerminal() if visible else None)
         self.timeout = timeout
         self._lock = asyncio.Lock()
         # このサーバー起動中に、会話用のセッションを一度でも作れたか。
@@ -208,52 +205,43 @@ class CodexAgent:
             schema_file=shlex.quote(str(schema_file)),
             out_file=shlex.quote(str(out_file)),
         )
-        # PC画面に見える実行（2026-09-04、本人の指定）。foot はシェルではなく
-        # 渡された1コマンドをそのまま起動するだけなので、標準入力のリダイレクトを
-        # 済ませた1本のシェル文字列にしてから bash -c で渡す。stdin/stderr は
-        # 端末の画面へ流れるので、Python 側では読み取らない（headless時と違い、
-        # 失敗時のstderr要約は out_file が読めたかどうかだけになる）
-        if self.visible:
-            launch_command = self.terminal_command.format(
-                cwd=shlex.quote(str(cwd)),
-                shell_cmd=shlex.quote(f"{command} < {shlex.quote(str(prompt_file))}"),
-            )
-            stdin_file = None
-        else:
-            launch_command = command
-            stdin_file = prompt_file.open("rb")
+        stderr = b""
         try:
-            # `codex exec resume --last` は --cd を取らない（§10 の cwd 固定は
-            # ブートストラップ側の --cd フラグだけに頼っていた）。--last がどの
-            # セッションを拾うかはサブプロセスの**実際のOS上のcwd**で決まるため、
-            # ここを渡し忘れると Python プロセスの起動場所（jarvis-secretary側）の
-            # セッションを拾ってしまい、Vault側のセッションと繋がらない
-            # （2026-09-04、実機で別セッションを掴んでいたのを実測で発見）
-            process = await asyncio.create_subprocess_shell(
-                launch_command,
-                cwd=str(cwd),
-                stdin=stdin_file,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL if self.visible else asyncio.subprocess.PIPE,
-            )
-            try:
-                _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                # §17 AGENT_TIMEOUT「ジョブを中止し、変更を破棄して報告」
-                shutil.rmtree(work, ignore_errors=True)
-                proposed_root = None
-                return AgentResult("", "", error=f"AGENT_TIMEOUT ({timeout}s)")
-            except asyncio.CancelledError:
-                # 「やめて」で割り込まれた。子プロセスを残さず片付けてから伝える
-                process.kill()
-                await process.wait()
-                shutil.rmtree(work, ignore_errors=True)
-                proposed_root = None
-                raise
+            if self.terminal is not None:
+                # 常駐ターミナルの中で動かす（画面に出しっぱなしにする）。
+                # 終了は worker が書く .done を待つ。cwd と標準入力の扱いは
+                # terminal.py 側が同じ約束で行う
+                code = await self.terminal.run(command, cwd, prompt_file, timeout)
+                if code is None:
+                    # ターミナルを開けない（ディスプレイが無い等）。黙って
+                    # 答えないより、開けなかったと言うほうがよい
+                    shutil.rmtree(work, ignore_errors=True)
+                    proposed_root = None
+                    return AgentResult("", "", error="AGENT_FAILED: ターミナルを開けませんでした")
+            else:
+                # `codex exec resume --last` は --cd を取らない（§10 の cwd 固定は
+                # ブートストラップ側の --cd フラグだけに頼っていた）。--last がどの
+                # セッションを拾うかはサブプロセスの**実際のOS上のcwd**で決まるため、
+                # ここを渡し忘れると Python プロセスの起動場所（jarvis-secretary側）の
+                # セッションを拾ってしまい、Vault側のセッションと繋がらない
+                # （2026-09-04、実機で別セッションを掴んでいたのを実測で発見）
+                process = await asyncio.create_subprocess_shell(
+                    command,
+                    cwd=str(cwd),
+                    stdin=prompt_file.open("rb"),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    # タイムアウトも「やめて」も、子プロセスを残さず片付ける
+                    process.kill()
+                    await process.wait()
+                    raise
+                code = process.returncode
 
-            if process.returncode != 0:
+            if code != 0:
                 if resuming:
                     # resume 先のセッションが失われている（サーバー外で codex の
                     # 保存が消えた等）。次回はブートストラップからやり直す
@@ -261,7 +249,7 @@ class CodexAgent:
                 tail = (stderr or b"").decode("utf-8", "ignore").strip().splitlines()[-3:]
                 shutil.rmtree(work, ignore_errors=True)
                 proposed_root = None
-                return AgentResult("", "", error="AGENT_FAILED: " + " / ".join(tail))
+                return AgentResult("", "", error="AGENT_FAILED: " + (" / ".join(tail) or f"exit {code}"))
 
             outcome = self._parse(out_file)
             if proposed_root is not None:
@@ -282,6 +270,16 @@ class CodexAgent:
             if use_session and not outcome.error:
                 self._session_started = True
             return outcome
+        except asyncio.TimeoutError:
+            # §17 AGENT_TIMEOUT「ジョブを中止し、変更を破棄して報告」
+            shutil.rmtree(work, ignore_errors=True)
+            proposed_root = None
+            return AgentResult("", "", error=f"AGENT_TIMEOUT ({timeout}s)")
+        except asyncio.CancelledError:
+            # 「やめて」で割り込まれた。変更を残さず片付けてから伝える
+            shutil.rmtree(work, ignore_errors=True)
+            proposed_root = None
+            raise
         except OSError as exc:
             shutil.rmtree(work, ignore_errors=True)
             proposed_root = None

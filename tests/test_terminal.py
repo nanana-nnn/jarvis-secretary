@@ -1,0 +1,132 @@
+"""常駐ターミナルの検証（2026-09-04、本人の指定：作業を出しっぱなしで見せる）。
+
+ここで確かめるのは**配管**であって、見た目ではない。
+ウィンドウマネージャの無い環境でも回せるよう、`foot` の代わりに
+「worker をそのまま bash で走らせる」起動コマンドを差し替えて使う。
+そのため画面は出ないが、queue → 実行 → .done → 終了コード という
+Python 側が頼っている約束はすべて本物と同じ経路を通る。
+"""
+import asyncio
+from functools import wraps
+from pathlib import Path
+
+import pytest
+
+from server.terminal import VisibleTerminal
+
+
+def _sync(test):
+    """非同期のテストを普通のテストとして回す（tests/test_briefing.py と同じ理由）。"""
+    @wraps(test)
+    def run(*args, **kwargs):
+        return asyncio.run(test(*args, **kwargs))
+    return run
+
+
+# 本物は `foot --title {title} bash {worker}`。ここは端末を開かずに worker だけ回す
+HEADLESS_LAUNCH = "bash {worker} >/dev/null 2>&1"
+
+
+def _terminal(tmp_path: Path) -> VisibleTerminal:
+    return VisibleTerminal(launch=HEADLESS_LAUNCH, root=tmp_path / "term")
+
+
+@_sync
+async def test_a_job_runs_and_its_exit_code_comes_back(tmp_path: Path) -> None:
+    """終了コードはプロセスの終了ではなく worker が書く .done から取る
+    （ターミナルは開いたままなので、プロセスの終了は待てない）。"""
+    term = _terminal(tmp_path)
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("ignored\n", encoding="utf-8")
+    out = tmp_path / "out.txt"
+
+    code = await term.run(f"cat > {out}", tmp_path, stdin, timeout=20)
+    assert code == 0
+    assert out.read_text(encoding="utf-8") == "ignored\n", "標準入力が渡っていない"
+    term.close()
+
+
+@_sync
+async def test_a_failing_job_reports_its_code(tmp_path: Path) -> None:
+    """失敗を 0 と取り違えない（§17 AGENT_FAILED の入口）。"""
+    term = _terminal(tmp_path)
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("x", encoding="utf-8")
+
+    assert await term.run("exit 3", tmp_path, stdin, timeout=20) == 3
+    term.close()
+
+
+@_sync
+async def test_jobs_run_where_they_are_told_to(tmp_path: Path) -> None:
+    """`codex exec resume --last` は --cd を取らず、実際の cwd でどのセッションを
+    拾うか決まる。常駐ターミナル経由でも cwd が効いていること（2026-09-04 の実測）。"""
+    term = _terminal(tmp_path)
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("x", encoding="utf-8")
+    workdir = tmp_path / "vault"
+    workdir.mkdir()
+    out = tmp_path / "where.txt"
+
+    assert await term.run(f"pwd > {out}", workdir, stdin, timeout=20) == 0
+    assert out.read_text(encoding="utf-8").strip() == str(workdir)
+    term.close()
+
+
+@_sync
+async def test_a_closed_terminal_is_reopened_for_the_next_job(tmp_path: Path) -> None:
+    """間違って閉じられても、次の依頼で開き直す（本人の指定・2026-09-04）。"""
+    term = _terminal(tmp_path)
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("x", encoding="utf-8")
+
+    assert await term.run("true", tmp_path, stdin, timeout=20) == 0
+    assert term.alive()
+
+    term.close()                    # 本人が × で閉じた状況
+    assert not term.alive()
+
+    assert await term.run("true", tmp_path, stdin, timeout=20) == 0, "開き直していない"
+    assert term.alive()
+    term.close()
+
+
+@_sync
+async def test_a_cancelled_job_does_not_leave_the_work_running(tmp_path: Path) -> None:
+    """「やめて」で止めたとき、codex を残さない。
+
+    worker は `setsid` で子を独立したプロセスグループにして pid を書く。
+    bash だけ殺すと下の codex が生き残って喋り続けるので、グループごと落とす。
+    """
+    term = _terminal(tmp_path)
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("x", encoding="utf-8")
+    marker = tmp_path / "still-running.txt"
+
+    # 3秒待ってから印を残す仕事。止められていれば印は残らない
+    job = term.run(f"sleep 3; touch {marker}", tmp_path, stdin, timeout=20)
+    task = asyncio.create_task(job)
+    await asyncio.sleep(1.2)        # worker が拾って走り出すまで待つ
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.sleep(2.5)        # 止まっていなければ、この間に印が残る
+    assert not marker.exists(), "止めたはずの仕事が動き続けている"
+    term.close()
+
+
+@_sync
+async def test_it_says_so_when_the_terminal_cannot_be_opened(tmp_path: Path) -> None:
+    """ディスプレイが無い等で開けないとき、黙って固まらずに None を返す
+    （呼び出し側はこれを AGENT_FAILED として本人へ伝える）。"""
+    term = VisibleTerminal(launch="this-command-does-not-exist-{title}-{worker}",
+                           root=tmp_path / "term")
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("x", encoding="utf-8")
+
+    # シェル経由なので起動自体は成功し、すぐ非ゼロで終わる。
+    # そのまま .done を待つと固まるので、短いタイムアウトで抜けることを見る
+    with pytest.raises(asyncio.TimeoutError):
+        await term.run("true", tmp_path, stdin, timeout=2)
+    term.close()
