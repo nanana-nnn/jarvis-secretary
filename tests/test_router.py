@@ -28,11 +28,18 @@ def test_write_intents_never_answer_directly() -> None:
         assert result.direct is None, f"{text} が直接応答へ回っている"
 
 
-def test_today_question_is_answered_directly() -> None:
-    """「今日のタスク」は Codex を通さない（実測 42.6 秒かかるため）。"""
-    result = route("今日のタスクを教えて")
-    assert result.intent == "ASK"
-    assert result.direct == "tasks"
+def test_task_questions_go_through_codex_so_the_work_is_visible() -> None:
+    """「今日のタスク」は **Codex を通す**（2026-09-04、本人の指定）。
+
+    直答なら0秒で返るが、Codex を起動しないので PC 画面に何も出ない。
+    「話しかける→PCで作業する様子が見える→結果だけスマホに返る」を
+    SNS用に優先し、20〜40秒かかるほうを選んだ。
+    ここが "tasks" に戻っていたら、その絵は撮れなくなっている。
+    """
+    for text in ("今日のタスクを教えて", "タスク教えて", "今日やること教えて"):
+        result = route(text)
+        assert result.intent == "ASK", text
+        assert result.direct is None, f"{text} が直答へ回り、画面に出なくなっている"
 
 
 def test_today_tasks_are_not_confused_with_daily_decisions(tmp_path: Path) -> None:
@@ -221,15 +228,17 @@ def test_missing_daily_still_answers_with_open_tasks(tmp_path: Path) -> None:
     assert not (tmp_path / "01_daily").exists()   # AI_RULES「勝手に作らない」
 
 
-def test_spoken_task_request_is_answered_directly() -> None:
-    """口で頼んだ「タスク教えて」も先読みキャッシュで即答する（2026-09-03、本人の指定）。
+def test_the_task_shortcut_has_flipped_three_times_and_is_currently_off() -> None:
+    """この1行は3回ひっくり返っている。**戻す前に経緯を読むこと。**
 
-    経緯：2026-09-02 は逆に「毎回 Codex を実際に起動する」を本人が選んだ
-    （直答リストが「今日のタスク」等の固定言い回ししか拾えず、「タスク教えて」は
-    ASK の既定へ落ちて Codex 行きになっていた。当時はそれが望みだった）。
-    2026-09-03、聞き終わりから表示まで実測約30秒のラグとして問題になり、
-    直答表に「タスク教えて」等を足して即答へ戻した。前回の理由は記録が無い。
+      2026-09-02  毎回 Codex を起動（直答表が固定言い回ししか拾えず、
+                  「タスク教えて」は ASK の既定へ落ちていた）
+      2026-09-03  聞き終わりから表示まで実測約30秒のラグを嫌って直答へ
+      2026-09-04  PC画面に作業を映すことを優先し、また Codex 経由へ
+
+    速さ（直答・0秒・画面に出ない）と、見せること（Codex経由・20〜40秒・
+    画面に出る）のトレードオフで、どちらが欲しいかが状況で変わっている。
     """
     result = route("タスク教えて")
     assert result.intent == "ASK"
-    assert result.direct == "tasks"
+    assert result.direct is None
