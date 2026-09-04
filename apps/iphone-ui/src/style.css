@@ -357,6 +357,9 @@ button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 7
 .settings { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--scheme-outline) }
 .settings label { color: var(--scheme-muted); font-size: 8px }
 .settings input { display: block; width: 58px; margin-top: 3px; border: 1px solid var(--scheme-outline); border-radius: 6px; background: var(--scheme-surface); padding: 4px; font: inherit; color: inherit }
+.debug-send { display: flex; gap: 6px; margin-bottom: 10px }
+.debug-send input { flex: 1; border: 1px solid var(--scheme-outline); border-radius: 6px; background: var(--scheme-surface); padding: 6px 8px; font: inherit; color: inherit }
+.debug-send button { padding: 6px 12px; font-size: 10px }
 .debug ol { padding-left: 18px } .debug li { color: var(--scheme-muted) } .debug li.accepted { color: var(--scheme-primary) }
 
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important } }

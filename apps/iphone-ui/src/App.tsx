@@ -115,7 +115,12 @@ export default function App() {
   const [state, setState] = useState<SecretaryState>("BOOTING");
   const [mic, setMic] = useState<"idle" | "on" | "denied">("idle");
   const [logs, setLogs] = useState<ClapLog[]>([]);
-  const [debug, setDebug] = useState(false);
+  // 初期値だけ ?debug=1 を見る。以後は state 一本にする（本人の指定・2026-09-04：
+  // showDebug を `debug || params?.get("debug")==="1"` の OR にしていたときは、
+  // URLに ?debug=1 が付いたままだと CLOSE を押しても閉じられなかった）
+  const [debug, setDebug] = useState(() =>
+    (import.meta.env.DEV || import.meta.env.VITE_PREVIEW === "1")
+    && new URLSearchParams(location.search).get("debug") === "1");
   // 実測値が届くまでの初期値。数字を作らないので、届いていない項目は「…」のままにする
   const [telemetry, setTelemetry] = useState<Telemetry>({
     kernel: "…", uptime: "…", shell: "…", mem: "…", pkgs: 0, user: "…", hname: "…", distro: "…", host: "JARVIS",
@@ -562,7 +567,7 @@ export default function App() {
   const view = preview && preview in copy ? preview : state;
   const content = copy[view];
   const connected = !["BOOTING", "OFFLINE", "ERROR"].includes(view);
-  const showDebug = debug || params?.get("debug") === "1";
+  const showDebug = debug;
 
   // sysmon の右列と同じ3段。上から fetch / dots / 状態（tty-clock の位置）。
   // 質問が始まったら1段目を文字回答カードへ差し替える（読み上げ廃止・2026-09-02）
@@ -610,7 +615,15 @@ export default function App() {
           <button className="debug-action" onClick={() => setDebug(value => !value)} aria-label="DEBUG LOG">•••</button>
       </div>
     </footer>
-    {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} onClose={() => setDebug(false)} /> : null}
+    {showDebug ? <DebugPanel logs={logs} settings={settings} onSettings={setSettings} onClose={() => setDebug(false)}
+        onSend={value => {
+          // 拍手を経由しないので、qa をここで自分で開く。開かないまま送ると
+          // agent.started/completed が updateLastQa/appendQaLines の
+          // 「開いているセッションが無ければ何もしない」ガードに落ちて、
+          // サーバーは成功していてもカードに何も出ない（2026-09-04、実測）
+          openQaSession(value, "thinking");
+          socketRef.current?.send({ type: "text.input", text: value });
+        }} /> : null}
     {/* ホーム画面 PWA では start_url が "/" なので ?size=1 が届かない。
         崩れるのが standalone のときだけなので、DEBUG からも出す */}
     {showDebug || params?.get("size") === "1" ? <SizeProbe /> : null}
