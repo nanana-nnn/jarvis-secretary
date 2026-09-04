@@ -19,6 +19,12 @@ export default defineConfig(({ mode }) => {
     },
     // 壁紙はサーバーが縮めて配る。ここを通さないとプレビューで 404 になる
     "/wallpaper.webp": { target: api, secure: false, changeOrigin: true },
+    // 壁紙スライダーのサムネイル（2026-09-05）。**末尾の s を忘れないこと。**
+    // 上の "/wallpaper.webp" は "/wallpapers/..." には当たらないので、ここが
+    // 無いと画像だけ Vite の 404 になる。切り替え自体は WebSocket 経由なので
+    // 動いてしまい、「壁紙は変わるのにスライダーに何も出ない」という
+    // 食い違いになる（実機で実際にそうなった）
+    "/wallpapers": { target: api, secure: false, changeOrigin: true },
     // 承認／却下は同一オリジンの相対URLで呼ぶ。iPhoneが5173へ送った
     // POSTをFastAPIへ中継しないと、承認画面だけがViteの404になる。
     "/jobs": { target: api, secure: false, changeOrigin: true },
