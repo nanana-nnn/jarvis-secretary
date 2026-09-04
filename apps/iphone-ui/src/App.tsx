@@ -134,6 +134,8 @@ export default function App() {
   const [speaking, setSpeaking] = useState(false);
   // 「聞き取れませんでした」を出した時刻。少し見せてから待機へ戻す
   const [heardNothingAt, setHeardNothingAt] = useState(0);
+  // 拍手で起きるたびに1つ増える。光の1周（sweep）を撃つ合図に使う
+  const [wakeCount, setWakeCount] = useState(0);
   // 文字回答カード（1段目）の中身。音声読み上げの代わり（2026-09-02）。
   // 質問ごとに1件。「続けて聞く」で同じ画面へ積み増す
   const [qa, setQa] = useState<QAExchange[]>([]);
@@ -403,10 +405,20 @@ export default function App() {
     return () => clearInterval(id);
   }, [wakeEvery]);
 
-  // 聞き取れなかったときは、文言を5秒見せてから待機へ戻す
+  // 聞き取れなかったときは、文言を5秒見せてから LISTENING へ戻す
+  // （DESIGN.md §17 STT_FAILED：「LISTENINGへ戻す」。SLEEPへは落とさない。
+  // send("IDLE") で SLEEP まで落としていたため、次の発話を拾えず
+  // マイクが録り直されないまま止まっていた（2026-09-04、実機で発見）。
+  // STT_FAILED が届いた時点で state は既に LISTENING のまま
+  // （AUDIO_FINAL は文字起こしが空でないときしか届かない）ので、
+  // ここでは state 遷移を送らず、カードを聞き取り待ちの見た目へ戻すだけでよい
   useEffect(() => {
     if (!heardNothingAt) return;
-    const id = setTimeout(() => { setHeardNothingAt(0); setQa([]); send("IDLE"); }, HEARD_NOTHING_MS);
+    const id = setTimeout(() => {
+      setHeardNothingAt(0);
+      setCaption("なにする？");
+      openQaSession("", "listening");
+    }, HEARD_NOTHING_MS);
     return () => clearTimeout(id);
   }, [heardNothingAt]);
 
@@ -452,25 +464,32 @@ export default function App() {
     return () => clearInterval(id);
   }, [microphone, mic]);
 
+  // WAKING突入は state だけを見る。speaking を依存に含めていたときは、
+  // 拍手の残響などで audio.speaking が一瞬trueになるたびにこのeffectが
+  // 再実行され、WAKE_FINISHED を送るはずだった250msタイマーがクリーンアップで
+  // 消えていた。wakeStartedRef が既にtrueなので再実行時に新しいタイマーを
+  // 張り直さず、AWAKENING のまま二度と進まなくなる（2026-09-04、実機で発見）
   useEffect(() => {
-    // 再描画のたびに再実行されても、起動ごとに一度だけ実行する
-    if (state === "WAKING" && !wakeStartedRef.current) {
-      wakeStartedRef.current = true;
-      setSpeaking(false);
-      setHeardNothingAt(0);
-      // カードは LISTENING に入ってから開く（本人の指定：拍手＝「なにする？」
-      // ではない。実際に聞いてから走らせる）。質問はまだ無いので空のまま
-      openQaSession("", "listening");
-      const id = setTimeout(() => {
-        // 「なにする？」は LISTENING のあいだだけ表示する文言（本人の指定：
-        // それ以外で出ると意味が通らない）。聞き取れたら audio.final が
-        // 本物の文で上書きする。何も聞けなければ下の IDLE 側で消す
-        setCaption("なにする？");
-        send("WAKE_FINISHED");
-      }, WAKE_ANIM_MS);
-      return () => clearTimeout(id);
-    }
-    if (state !== "WAKING") wakeStartedRef.current = false;
+    if (state !== "WAKING") { wakeStartedRef.current = false; return; }
+    if (wakeStartedRef.current) return;   // 再描画のたびに再実行されても、起動ごとに一度だけ
+    wakeStartedRef.current = true;
+    setSpeaking(false);
+    setHeardNothingAt(0);
+    setWakeCount(n => n + 1);   // 光の1周はこれを合図に撃つ（下の sweeping）
+    // カードは LISTENING に入ってから開く（本人の指定：拍手＝「なにする？」
+    // ではない。実際に聞いてから走らせる）。質問はまだ無いので空のまま
+    openQaSession("", "listening");
+    const id = setTimeout(() => {
+      // 「なにする？」は LISTENING のあいだだけ表示する文言（本人の指定：
+      // それ以外で出ると意味が通らない）。聞き取れたら audio.final が
+      // 本物の文で上書きする。何も聞けなければ下の IDLE 側で消す
+      setCaption("なにする？");
+      send("WAKE_FINISHED");
+    }, WAKE_ANIM_MS);
+    return () => clearTimeout(id);
+  }, [state]);
+
+  useEffect(() => {
     if (state === "LISTENING") {
       // 話し始めていたら待機へ戻さない。言い終わるまで待つ
       // （終端は VAD が決める。長すぎる発話は §6 の 30秒で必ず切れる）
@@ -550,18 +569,20 @@ export default function App() {
   // agent.started などが更新する相手を失う
   const listening = qa.length === 1 && qa[0].phase === "listening" && !qa[0].question && !qa[0].lines.length;
 
-  // 聞き始めた瞬間だけ「光が縁を1周」を出し、そのあと呼吸へ渡す
-  // （本人の指定・2026-09-03）。listening が false→true になった時だけ立てる。
-  // listening が続くあいだずっと true のままにすると、話し終わって
-  // AnswerCard へ切り替わる直前に再描画されても1周が再生されてしまうため、
-  // SWEEP_MS で確実に自分から false へ戻す
+  // 「光が縁を1周」は**拍手で起きた合図**（本人の指定・2026-09-03）。
+  // 依存を wakeCount にする。listening の false→true で撃つと、聞き取り直し
+  // （STT_FAILED後の再リッスン・「続けて聞く」）のたびに回り直して
+  // 「ずっと回っている」ように見える（2026-09-04 実機）。
+  // また state を依存にすると、WAKING→LISTENING の遷移(250ms)で
+  // クリーンアップが走り SWEEP_MS(1100ms)のタイマーが消えて回りっぱなしになる。
+  // 起動ごとに1つ増える wakeCount なら、その間に state が動いても消えない
   const [sweeping, setSweeping] = useState(false);
   useEffect(() => {
-    if (!listening) { setSweeping(false); return; }
+    if (!wakeCount) return;
     setSweeping(true);
     const id = setTimeout(() => setSweeping(false), SWEEP_MS);
     return () => clearTimeout(id);
-  }, [listening]);
+  }, [wakeCount]);
 
   const preview = params?.get("state")?.toUpperCase() as SecretaryState | undefined;
   const view = preview && preview in copy ? preview : state;

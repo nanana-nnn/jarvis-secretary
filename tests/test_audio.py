@@ -6,7 +6,7 @@ import math
 import struct
 
 from server.audio import (FRAME_BYTES, FRAME_MS, MAX_UTTERANCE_MS, MIN_UTTERANCE_MS,
-                          SAMPLE_RATE, SILENCE_MS, SpeechSplitter)
+                          NOISE_UTTERANCE_MS, SAMPLE_RATE, SILENCE_MS, SpeechSplitter)
 
 
 def tone(ms: int, hz: int = 220) -> bytes:
@@ -134,3 +134,18 @@ def test_short_reply_still_gets_through() -> None:
         fed += 100
     assert done, "短い返事まで捨てている"
     assert done[0].ms >= MIN_UTTERANCE_MS
+
+
+def test_the_noise_gate_covers_the_clap_residue_measured_in_the_field() -> None:
+    """拍手の残響は VAD を通り抜けて発話として確定する（実機で 360ms）。
+
+    それ自体は止められないので、書き起こしが空だったときに
+    「物音」として黙って捨てる二段目の関門を app.py が持っている。
+    ここではその境界が、実測値をまたいで正しい側にあることを見る。
+    上げすぎると、本当に聞き取れなかったときの「聞き取れませんでした」まで
+    黙ってしまうので、両側から挟んでおく。
+    """
+    CLAP_RESIDUE_MS = 360      # 2026-09-04 実機のログ
+    assert MIN_UTTERANCE_MS < CLAP_RESIDUE_MS, "残響は VAD の下限では止まらない"
+    assert CLAP_RESIDUE_MS <= NOISE_UTTERANCE_MS, "残響が物音として捨てられない"
+    assert NOISE_UTTERANCE_MS < 1_000, "上げすぎ。本当の空振りまで黙ってしまう"

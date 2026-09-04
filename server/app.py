@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .agent import CodexAgent, LONG_TIMEOUT
-from .audio import SpeechSplitter
+from .audio import NOISE_UTTERANCE_MS, SpeechSplitter
 from .briefing import Briefing
 from .config import Settings
 from .router import route
@@ -601,6 +601,12 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                 return
             logger.info("[STT] %dms → %r", result.ms, result.text[:60])
             if not result.text:
+                # 短くて中身が無いものは物音。**黙って聞き続ける。**
+                # ここでエラーを出すと、拍手の残響のたびに「聞き取れませんでした」
+                # →聞き取り直しになり、光の1周も撃ち直される（2026-09-04 実機）
+                if utterance.ms <= NOISE_UTTERANCE_MS:
+                    logger.info("[STT] ignored noise (%dms)", utterance.ms)
+                    return
                 # §17「聞き取れませんでした」と返して LISTENING へ戻す
                 await emit({
                     "type": "system.error", "code": "STT_FAILED",
@@ -797,6 +803,12 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                             bool(message.get("accepted", False)),
                             str(message.get("reason", "unknown")),
                         )
+                        # 起きたら、作業を見せるターミナルを用意しておく。
+                        # 間違って閉じられていたらここで開き直す（本人の指定・
+                        # 2026-09-04）。話し終える頃には開いているので、
+                        # 依頼が来てから開くより間に合う
+                        if message.get("accepted") and agent.terminal is not None:
+                            await agent.terminal.ensure_running()
                     elif message.get("type") == "text.input":
                         # 拍手など、端末が確定させた固定入力をPC側のCodexへ渡す
                         value = message.get("text")
