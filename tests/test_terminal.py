@@ -130,3 +130,45 @@ async def test_it_says_so_when_the_terminal_cannot_be_opened(tmp_path: Path) -> 
     with pytest.raises(asyncio.TimeoutError):
         await term.run("true", tmp_path, stdin, timeout=2)
     term.close()
+
+
+@_sync
+async def test_a_second_terminal_is_not_opened_when_one_is_already_up(tmp_path: Path) -> None:
+    """**開いていたら開かない**（本人の指定・2026-09-05）。
+
+    ここで見るのは「同じ VisibleTerminal の2回目」ではなく、
+    **サーバーを再起動したとき**。Python 側の記憶は消えるので、別インスタンスが
+    前回のウィンドウを見つけられないと2枚目を開いてしまう（実機でそうなった）。
+    """
+    first = _terminal(tmp_path)
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("x", encoding="utf-8")
+    assert await first.run("true", tmp_path, stdin, timeout=20) == 0
+    assert first.alive()
+    running = first.worker_pid()
+    assert running is not None
+
+    # サーバー再起動に相当。同じ場所を見る新しいインスタンス
+    restarted = _terminal(tmp_path)
+    assert restarted.alive(), "前回のウィンドウを見つけられていない"
+    assert await restarted.ensure_running() is True
+    assert restarted.worker_pid() == running, "2枚目を開いてしまっている"
+
+    restarted.close()
+    assert first.worker_pid() is None
+
+
+@_sync
+async def test_closing_stops_the_worker_loop_too(tmp_path: Path) -> None:
+    """起動役だけ殺しても worker ループは生き残る。**そこまで止める。**
+    （2026-09-05、テストが残した worker が30個以上溜まっていた）"""
+    term = _terminal(tmp_path)
+    stdin = tmp_path / "prompt.txt"
+    stdin.write_text("x", encoding="utf-8")
+    assert await term.run("true", tmp_path, stdin, timeout=20) == 0
+    pid = term.worker_pid()
+    assert pid is not None
+
+    term.close()
+    await asyncio.sleep(0.5)
+    assert not Path(f"/proc/{pid}").exists(), "worker が回り続けている"

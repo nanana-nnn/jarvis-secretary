@@ -18,6 +18,7 @@ bash だけ殺しても codex が残る）。
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 import os
 import shlex
@@ -43,6 +44,12 @@ WORKER_TITLE = "JARVIS"
 # 画面に残す出力は最小限にする。codex 自身の出力が主役なので、区切りだけ入れる
 WORKER_SCRIPT = r"""#!/usr/bin/env bash
 queue="$1"
+pidfile="$2"
+# **自分の PID を残す。** サーバーを再起動すると Python 側の記憶は消えるので、
+# 「もう1枚開いているか」はこのファイルでしか分からない。
+# 消し忘れると次の起動でもう1枚開いてしまう（2026-09-05、実機で2枚になった）
+echo $$ > "$pidfile"
+trap 'rm -f "$pidfile"' EXIT
 printf '\033]0;%s\007' "JARVIS"
 echo "JARVIS worker ready — 依頼を待っています"
 echo "（このウィンドウは開いたままにしておいてください）"
@@ -82,11 +89,33 @@ class VisibleTerminal:
         self.queue = self.root / "queue"
         self.queue.mkdir(parents=True, exist_ok=True)
         self._worker_file = self.root / "worker.sh"
+        self._pid_file = self.root / "worker.pid"
         self._process: asyncio.subprocess.Process | None = None
         self._serial = 0
 
+    def worker_pid(self) -> int | None:
+        """今この queue を見ている worker の PID。**別プロセスが開けたものも拾う。**
+
+        Python 側の記憶（_process）だけを見ると、サーバーを再起動したときに
+        「前回開いたウィンドウ」が見えず、もう1枚開いてしまう
+        （2026-09-05、実機で2枚になった）。PID は使い回されるので、
+        cmdline に自分の worker.sh が入っていることまで確かめる。
+        """
+        try:
+            pid = int(self._pid_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "ignore")
+        except OSError:
+            return None                      # もう居ない（消し忘れの pid ファイル）
+        return pid if str(self._worker_file) in cmdline else None
+
     def alive(self) -> bool:
-        return self._process is not None and self._process.returncode is None
+        """1枚でも開いていれば True。**開いていたら開かない**（本人の指定）。"""
+        if self._process is not None and self._process.returncode is None:
+            return True
+        return self.worker_pid() is not None
 
     async def ensure_running(self) -> bool:
         """開いていなければ開く。**閉じられていたらここで開き直す**
@@ -96,7 +125,8 @@ class VisibleTerminal:
         self._worker_file.write_text(WORKER_SCRIPT, encoding="utf-8")
         command = self.launch.format(
             title=shlex.quote(WORKER_TITLE),
-            worker=f"{shlex.quote(str(self._worker_file))} {shlex.quote(str(self.queue))}",
+            worker=(f"{shlex.quote(str(self._worker_file))} "
+                    f"{shlex.quote(str(self.queue))} {shlex.quote(str(self._pid_file))}"),
         )
         try:
             self._process = await asyncio.create_subprocess_shell(
@@ -163,6 +193,19 @@ class VisibleTerminal:
             pass
 
     def close(self) -> None:
-        if self.alive() and self._process is not None:
-            self._process.terminate()
+        """ウィンドウと worker を止める。
+
+        **worker まで落とすこと。** 起動役（シェル）だけ終わらせても、その下の
+        worker ループは生き残って回り続ける（2026-09-05、テストが残した
+        worker が30個以上溜まっていた）。
+        """
+        pid = self.worker_pid()
+        if pid is not None:
+            with suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGTERM)
+            with suppress(OSError):
+                self._pid_file.unlink()
+        if self._process is not None and self._process.returncode is None:
+            with suppress(ProcessLookupError):
+                self._process.terminate()
         self._process = None
