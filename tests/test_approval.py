@@ -281,6 +281,10 @@ def test_unusable_output_still_reports_why(tmp_path: Path) -> None:
 _BOOTSTRAP_CMD = "printf '%s' '{{\"summary\":\"boot\",\"spoken_reply\":\"boot\",\"sources\":[]}}' > {out_file}"
 _RESUME_CMD = "printf '%s' '{{\"summary\":\"resume\",\"spoken_reply\":\"resume\",\"sources\":[]}}' > {out_file}"
 _FAIL_CMD = "exit 1"
+# 実際のOS上のcwdを答えに埋め込むだけのコマンド。`codex exec resume --last` は
+# --cd を取らず、実際のcwdでどのセッションを拾うか決まるので、
+# create_subprocess_shell に cwd= を渡し忘れると気づけない（2026-09-04、実機で発見）
+_PWD_CMD = "printf '{{\"summary\":\"%s\",\"spoken_reply\":\"ok\",\"sources\":[]}}' \"$(pwd)\" > {out_file}"
 
 
 @_sync
@@ -289,7 +293,7 @@ async def test_second_read_only_turn_resumes_the_session(tmp_path: Path) -> None
     「タスク教えて」のあと「じゃあ1件目やって」のように話しかけられるように）。"""
     from server.agent import CodexAgent
 
-    agent = CodexAgent(tmp_path, command=_BOOTSTRAP_CMD, resume_command=_RESUME_CMD)
+    agent = CodexAgent(tmp_path, command=_BOOTSTRAP_CMD, resume_command=_RESUME_CMD, visible=False)
     assert agent._session_started is False
 
     first = await agent.run("今日のタスク教えて", "read_only", use_session=True)
@@ -308,7 +312,7 @@ async def test_propose_write_never_resumes(tmp_path: Path) -> None:
 
     vault = tmp_path / "vault"
     vault.mkdir()
-    agent = CodexAgent(vault, command=_BOOTSTRAP_CMD, resume_command=_RESUME_CMD)
+    agent = CodexAgent(vault, command=_BOOTSTRAP_CMD, resume_command=_RESUME_CMD, visible=False)
     agent._session_started = True   # 会話が既に始まっている状態を作る
 
     result = await agent.run("直して", "propose_write", use_session=True)
@@ -321,7 +325,7 @@ async def test_a_lost_session_falls_back_to_bootstrap_next_time(tmp_path: Path) 
     直さないと、一度失われたセッションへ永遠に resume し続けて壊れたままになる。"""
     from server.agent import CodexAgent
 
-    agent = CodexAgent(tmp_path, command=_BOOTSTRAP_CMD, resume_command=_FAIL_CMD)
+    agent = CodexAgent(tmp_path, command=_BOOTSTRAP_CMD, resume_command=_FAIL_CMD, visible=False)
     agent._session_started = True   # resume 先が既に無い状態を再現する
 
     failed = await agent.run("続き", "read_only", use_session=True)
@@ -330,3 +334,23 @@ async def test_a_lost_session_falls_back_to_bootstrap_next_time(tmp_path: Path) 
 
     recovered = await agent.run("続き", "read_only", use_session=True)
     assert recovered.summary == "boot"
+
+
+@_sync
+async def test_subprocess_actually_launches_inside_the_vault(tmp_path: Path) -> None:
+    """`codex exec resume --last` は --cd を取らないので、resume がどのセッションを
+    拾うかは**サブプロセスの実際のOS上のcwd**で決まる。create_subprocess_shell に
+    cwd= を渡し忘れると、Python サーバーの起動場所のセッションを拾ってしまい、
+    Vault側の会話と繋がらない（2026-09-04、実機で別セッションを掴んでいたのを発見）。
+    ブートストラップ・resume どちらの実行でも、実cwdがVaultになっていることを見る。"""
+    from server.agent import CodexAgent
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    agent = CodexAgent(vault, command=_PWD_CMD, resume_command=_PWD_CMD, visible=False)
+
+    first = await agent.run("1回目", "read_only", use_session=True)
+    assert first.summary == str(vault)
+
+    second = await agent.run("2回目", "read_only", use_session=True)
+    assert second.summary == str(vault)

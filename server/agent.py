@@ -58,6 +58,18 @@ DEFAULT_RESUME_CMD = (
     "--skip-git-repo-check -"
 )
 
+# 作業がPC画面で見える端末（2026-09-04、本人の指定：「話しかける→PC画面で
+# 勝手に作業する様子が見える→結果だけスマホに返る」をSNS映えのため必須にする）。
+# codex 自体をターミナル内で直接動かす（headless実行の代わり）。
+# {shell_cmd} には、実際に投げる codex コマンド＋標準入力のリダイレクトを
+# まとめて1本の文字列で渡す（foot は自身がシェルではなく、渡された1コマンドを
+# そのまま起動するだけなので、リダイレクトが要るならシェル越しに渡す必要がある）。
+# `--output-last-message {out_file}` は引き続き効くので、画面に見せながら
+# 構造化JSONも同時に受け取れる。
+# 失う物：stderr を個別に捕まえられなくなる（画面に出るだけになる）ので、
+# 失敗時の理由表示は out_file が読めたかどうかだけに落ちる（§17 は維持できる）
+DEFAULT_TERMINAL_CMD = "foot --working-directory {cwd} bash -c {shell_cmd}"
+
 # {sandbox} に入れる値。codex は --sandbox の引数だが、他の CLI では別の
 # フラグになる（Claude Code なら --allowedTools / --permission-mode）。
 # コード側に残っていた唯一の codex 固有部分なので .env から差し替えられるようにする。
@@ -129,13 +141,22 @@ class CodexAgent:
     """Codex CLI を非対話で回す。同時実行は1つに絞る（§10）。"""
 
     def __init__(self, vault: Path, command: str | None = None, resume_command: str | None = None,
+                 terminal_command: str | None = None, visible: bool | None = None,
                  timeout: int = DEFAULT_TIMEOUT) -> None:
         self.vault = vault
         # AGENT_CMD が新しい名前。CODEX_CMD は既存の .env をそのまま動かすため残す
         self.command = command or os.getenv("AGENT_CMD") or os.getenv("CODEX_CMD") or DEFAULT_CODEX_CMD
         self.resume_command = resume_command or os.getenv("AGENT_RESUME_CMD") or DEFAULT_RESUME_CMD
+        self.terminal_command = terminal_command or os.getenv("AGENT_TERMINAL_CMD") or DEFAULT_TERMINAL_CMD
         self.sandbox_read = os.getenv("AGENT_SANDBOX_READ") or DEFAULT_SANDBOX_READ
         self.sandbox_write = os.getenv("AGENT_SANDBOX_WRITE") or DEFAULT_SANDBOX_WRITE
+        # 既定はPC画面に見える実行（2026-09-04、本人の指定）。テストや
+        # ディスプレイの無い環境では visible=False を明示して headless に戻す
+        # （AGENT_VISIBLE=0 で .env からも切れる）
+        if visible is None:
+            env = os.getenv("AGENT_VISIBLE")
+            visible = env != "0" if env is not None else True
+        self.visible = visible
         self.timeout = timeout
         self._lock = asyncio.Lock()
         # このサーバー起動中に、会話用のセッションを一度でも作れたか。
@@ -187,12 +208,33 @@ class CodexAgent:
             schema_file=shlex.quote(str(schema_file)),
             out_file=shlex.quote(str(out_file)),
         )
+        # PC画面に見える実行（2026-09-04、本人の指定）。foot はシェルではなく
+        # 渡された1コマンドをそのまま起動するだけなので、標準入力のリダイレクトを
+        # 済ませた1本のシェル文字列にしてから bash -c で渡す。stdin/stderr は
+        # 端末の画面へ流れるので、Python 側では読み取らない（headless時と違い、
+        # 失敗時のstderr要約は out_file が読めたかどうかだけになる）
+        if self.visible:
+            launch_command = self.terminal_command.format(
+                cwd=shlex.quote(str(cwd)),
+                shell_cmd=shlex.quote(f"{command} < {shlex.quote(str(prompt_file))}"),
+            )
+            stdin_file = None
+        else:
+            launch_command = command
+            stdin_file = prompt_file.open("rb")
         try:
+            # `codex exec resume --last` は --cd を取らない（§10 の cwd 固定は
+            # ブートストラップ側の --cd フラグだけに頼っていた）。--last がどの
+            # セッションを拾うかはサブプロセスの**実際のOS上のcwd**で決まるため、
+            # ここを渡し忘れると Python プロセスの起動場所（jarvis-secretary側）の
+            # セッションを拾ってしまい、Vault側のセッションと繋がらない
+            # （2026-09-04、実機で別セッションを掴んでいたのを実測で発見）
             process = await asyncio.create_subprocess_shell(
-                command,
-                stdin=prompt_file.open("rb"),
+                launch_command,
+                cwd=str(cwd),
+                stdin=stdin_file,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL if self.visible else asyncio.subprocess.PIPE,
             )
             try:
                 _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
