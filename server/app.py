@@ -24,6 +24,7 @@ from .config import Settings
 from .router import route
 from .transcribe import Transcriber
 from . import vault as vault_reader
+from . import wallpapers
 from .write import WriteRejected, apply_proposal
 
 
@@ -540,6 +541,22 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         return FileResponse(out, media_type="image/webp",
                             headers={"Cache-Control": "public, max-age=604800, immutable"})
 
+    @app.get("/wallpapers/{identifier}/thumb.webp")
+    async def wallpaper_thumb(identifier: str) -> Response:
+        """スライダーに並べるサムネイル。
+
+        **一覧に載っているものしか返さない。** identifier はパスではなく札なので、
+        任意のパスを送りつけても選択肢の外は取り出せない（wallpapers.resolve）
+        """
+        path = wallpapers.resolve(identifier)
+        if path is None:
+            return Response(status_code=404)
+        out = await asyncio.to_thread(wallpapers.thumbnail, path, WALLPAPER_CACHE / "thumbs")
+        if out is None:
+            return Response(status_code=404)
+        return FileResponse(out, media_type="image/webp",
+                            headers={"Cache-Control": "public, max-age=604800, immutable"})
+
     @app.websocket("/ws")
     async def websocket_endpoint(socket: WebSocket) -> None:
         origin = socket.headers.get("origin")
@@ -626,6 +643,24 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
             # §9「SYSTEM を最優先で判定する（エージェントを起動しない）」
             if decision.intent == "SYSTEM":
                 await emit({"type": "session.sleep", "reason": "system", "ts": timestamp_ms()})
+                return
+
+            # 壁紙を選ぶ（2026-09-05）。1段目のカードをスライダーへ差し替えるだけで、
+            # Codex も Vault も通らない。選んだあとの反映は wallpaper.select 側
+            if decision.intent == "WALLPAPER":
+                items = await asyncio.to_thread(wallpapers.find_all)
+                # UI は audio.final で TRANSCRIBING へ入り、agent.started を受けて
+                # 初めて先へ進める（§6）。ここを飛ばすと TRANSCRIBING で止まる
+                # （直答の経路と同じ理由。2026-09-01 に実機で固まっている）
+                await emit({
+                    "type": "agent.started", "intent": decision.intent,
+                    "matched": decision.matched, "long": False, "ts": timestamp_ms(),
+                })
+                await emit({
+                    "type": "wallpaper.choices",
+                    "items": [{"id": identifier, "name": path.stem} for identifier, path in items],
+                    "ts": timestamp_ms(),
+                })
                 return
 
             # 決まった問いはファイルを読むだけで返す。Codex は実測 42.6 秒かかる
@@ -790,6 +825,19 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                         value = message.get("text")
                         if isinstance(value, str) and value.strip() and (job is None or job.done()):
                             job = asyncio.create_task(respond(value.strip()))
+                    elif message.get("type") == "wallpaper.select":
+                        # スライダーで選ばれた。**実際に PC の壁紙を変える。**
+                        # 配色の作り直しは caelestia がやり、watch_scheme が
+                        # scheme.changed / wallpaper.changed を配るので、
+                        # 画面の色と背景はそれで勝手に追従する
+                        chosen = message.get("id")
+                        path = wallpapers.resolve(chosen) if isinstance(chosen, str) else None
+                        ok = await wallpapers.apply(path) if path is not None else False
+                        await emit({
+                            "type": "wallpaper.applied", "ok": ok,
+                            "name": path.stem if path is not None else "",
+                            "ts": timestamp_ms(),
+                        })
                     elif message.get("type") == "mic.health":
                         # 実機のマイクが止まったときだけ届く。原因の切り分けに使う
                         logger.warning(

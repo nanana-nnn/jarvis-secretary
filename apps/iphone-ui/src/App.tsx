@@ -5,6 +5,7 @@ import { ClapMicrophone } from "./audio/microphone";
 import { ScreenWakeLock } from "./audio/wake-lock";
 import { DEFAULT_CLAP_SETTINGS, type ClapLog, type ClapSettings } from "./audio/types";
 import { AnswerCard, type QAExchange, type QAPhase } from "./components/AnswerCard";
+import { WallpaperPicker, type WallpaperChoice } from "./components/WallpaperPicker";
 import { DebugPanel } from "./components/DebugPanel";
 import { Ambience } from "./components/Ambience";
 import { Fetch, type Facts } from "./components/Fetch";
@@ -136,6 +137,10 @@ export default function App() {
   const [heardNothingAt, setHeardNothingAt] = useState(0);
   // 拍手で起きるたびに1つ増える。光の1周（sweep）を撃つ合図に使う
   const [wakeCount, setWakeCount] = useState(0);
+  // 壁紙スライダー（2026-09-05）。null なら出さない。
+  // applying は「押したがまだ切り替わっていない1枚」。数秒かかるので目印を出す
+  const [papers, setPapers] = useState<WallpaperChoice[] | null>(null);
+  const [applyingPaper, setApplyingPaper] = useState<string | null>(null);
   // 文字回答カード（1段目）の中身。音声読み上げの代わり（2026-09-02）。
   // 質問ごとに1件。「続けて聞く」で同じ画面へ積み増す
   const [qa, setQa] = useState<QAExchange[]>([]);
@@ -272,6 +277,28 @@ export default function App() {
 
         // 壁紙が変わった。版つきのURLで取り直す（同じ版ならブラウザの控えが効く）。
         // 版が空＝変換に失敗しているので、壁紙なしへ戻す
+        // 「壁紙かえたい」への返事。1段目をスライダーへ差し替える
+        if (event.type === "wallpaper.choices" && Array.isArray(event.items)) {
+          setPapers(event.items as WallpaperChoice[]);
+          setApplyingPaper(null);
+          setCaption("どれにする？");
+          send("AGENT_COMPLETED");   // TRANSCRIBING/THINKING に留まらせない
+        }
+
+        // 切り替えの結果。**成功したらスライダーを閉じて元のカードへ戻す**
+        // （本人の指定：変わったら元に戻る）。実際の見た目の反映は
+        // 下の wallpaper.changed / scheme.changed が別途届いて行う
+        if (event.type === "wallpaper.applied") {
+          setApplyingPaper(null);
+          if (event.ok) {
+            setPapers(null);
+            setCaption("壁紙を変えたよ");
+            send("IDLE");
+          } else {
+            setCaption("壁紙を変えられなかった");
+          }
+        }
+
         if (event.type === "wallpaper.changed") {
           const version = typeof event.version === "string" ? event.version : "";
           document.documentElement.style.setProperty(
@@ -425,6 +452,10 @@ export default function App() {
   // 待機へ戻ったら文字回答カードを閉じる。どの経路（ボタン・タイムアウト・
   // エラー復帰）で戻っても、ここで確実に片付ける
   useEffect(() => { if (state === "SLEEP" && qa.length) setQa([]); }, [state, qa.length]);
+  // 壁紙スライダーも同じ。どの経路（決定・やめる・エラー復帰）で戻っても畳む
+  useEffect(() => {
+    if (state === "SLEEP" && papers) { setPapers(null); setApplyingPaper(null); }
+  }, [state, papers]);
 
   // 録音は LISTENING の間だけ。待機中に送り続けない
   useEffect(() => {
@@ -500,6 +531,9 @@ export default function App() {
     // 文字回答カードを見せたまま自動で待機へ戻す（読み上げ廃止・2026-09-02）。
     // 「戻る」「続けて聞く」のどちらかを押せばこのタイマーは次の描画で消える
     if (state === "SPEAKING") {
+      // 壁紙スライダーを開けている間は寝かせない。75枚を選ぶのに
+      // POST_ANSWER_IDLE_MS(20秒)では足りず、選んでいる最中に消える
+      if (papers) return;
       const id = setTimeout(() => { setQa([]); send("IDLE"); }, POST_ANSWER_IDLE_MS);
       return () => clearTimeout(id);
     }
@@ -507,7 +541,7 @@ export default function App() {
       const id = setTimeout(() => send("RETRY"), 5000);
       return () => clearTimeout(id);
     }
-  }, [state, speaking]);
+  }, [state, speaking, papers]);
 
   async function enableMic() {
     // タップ自体が届いているかを切り分けるための即時マーカー
@@ -594,7 +628,17 @@ export default function App() {
   // 質問が始まったら1段目を文字回答カードへ差し替える（読み上げ廃止・2026-09-02）
   return <main className={`shell state-${view.toLowerCase()}`}>
     <Ambience state={view} />
-    {qa.length && !listening
+    {/* 1段目は3通りに差し替わる。**枠の大きさはどれも同じ**（grid の
+        minmax(0,1fr) の段をそのまま使う。中身だけが変わる）。
+        壁紙スライダーが最優先（出している間は他の表示に邪魔させない） */}
+    {papers
+      ? <WallpaperPicker items={papers} applying={applyingPaper}
+          onPick={id => {
+            setApplyingPaper(id);
+            socketRef.current?.send({ type: "wallpaper.select", id });
+          }}
+          onCancel={() => { setPapers(null); setApplyingPaper(null); setCaption(""); send("IDLE"); }} />
+      : qa.length && !listening
       ? <AnswerCard exchanges={qa} onBack={closeQa} onContinue={continueQa}
           obsidianActive={Boolean(live.apps.obsidian?.alive)} />
       : <Fetch facts={telemetry} link={connected ? "LINKED" : "OFFLINE"} glow={listening} sweep={sweeping} />}

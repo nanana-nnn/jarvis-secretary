@@ -12,7 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-Intent = Literal["SYSTEM", "CAPTURE", "EXECUTE", "DECIDE", "ASK"]
+# WALLPAPER は PC の見た目を変える操作（2026-09-05）。Vault とも Codex とも
+# 関係がないので、判定の一番手前で分けて、専用の画面（スライダー）へ渡す
+Intent = Literal["SYSTEM", "WALLPAPER", "CAPTURE", "EXECUTE", "DECIDE", "ASK"]
 Mode = Literal["read_only", "propose_write"]
 
 # 直接答えられる問い。ここに当たれば Codex を起動しない
@@ -27,6 +29,11 @@ class Route:
     matched: str                    # 何に当たったか。誤分類に気づけるよう画面へ出す
     long: bool = False              # 既定の持ち時間では終わらない仕事か（§10）
 
+
+# 壁紙を選びたい合図。**RULES より先に見る。**
+# 「壁紙変えて」は EXECUTE の「変えて」に当たってしまい、Codex に Vault を
+# 書き換えさせる話になってしまう（2026-09-05）。ここで先に捕まえる
+WALLPAPER_WORDS: tuple[str, ...] = ("壁紙", "背景", "かべがみ")
 
 # §9 の表。左が分類、右が手がかり。**上から順に見る**（SYSTEM が最優先）
 RULES: list[tuple[Intent, Mode, tuple[str, ...]]] = [
@@ -65,6 +72,11 @@ def route(text: str) -> Route:
     """発話を分類する。どれにも当たらなければ §9 のとおり ASK を既定にする。"""
     normalised = text.strip()
     long = _is_long(normalised)
+
+    # 壁紙は RULES より先。下の EXECUTE（「変えて」）に食われないようにする
+    for word in WALLPAPER_WORDS:
+        if word in normalised:
+            return Route(intent="WALLPAPER", mode="read_only", direct=None, matched=word)
 
     for intent, mode, keywords in RULES:
         for keyword in keywords:

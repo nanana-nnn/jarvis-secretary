@@ -312,6 +312,32 @@ button { font: inherit; color: inherit }
   100% { box-shadow: 0 0 16px 3px color-mix(in srgb, var(--qa-glow) 30%, transparent) }
 }
 
+/* 1段目の差し替え：壁紙スライダー（2026-09-05、本人の指定）。
+   **枠の大きさは .fetch のまま変えない。** 横スクロールは中の .paper-strip が
+   持ち、カード自身は伸び縮みしない（3段の等分が崩れないようにする） */
+.paper-card { display: flex; flex-direction: column; padding: 8px 10px; height: 100%;
+  min-height: 0; overflow: hidden; text-align: left }
+.paper-head { display: flex; align-items: center; justify-content: space-between;
+  flex: 0 0 auto; margin-bottom: 6px;
+  color: var(--scheme-muted); font-size: 10px; letter-spacing: .18em }
+.paper-cancel { padding: 4px 10px; font-size: 10px; border: 1px solid var(--scheme-outline);
+  border-radius: 8px; background: transparent }
+/* 横スクロール。1枚ずつ止める。縦には動かさない（親の段からはみ出さない） */
+.paper-strip { flex: 1; min-height: 0; display: flex; gap: 8px; align-items: stretch;
+  overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch }
+.paper-strip::-webkit-scrollbar { display: none }
+.paper-item { flex: 0 0 auto; height: 100%; aspect-ratio: 3 / 2; padding: 0;
+  border: 1px solid var(--scheme-outline); border-radius: 10px; overflow: hidden;
+  background: var(--scheme-surface); scroll-snap-align: center;
+  transition: border-color .2s ease, opacity .2s ease }
+.paper-item img { width: 100%; height: 100%; object-fit: cover; display: block }
+.paper-item:disabled { opacity: .45 }
+/* 決定した1枚。切り替わるまでの数秒、どれを押したか分かるようにする */
+.paper-applying { border-color: var(--scheme-primary); opacity: 1 !important;
+  animation: qa-breathe 1.2s ease-in-out infinite }
+.paper-empty { margin: auto; color: var(--scheme-muted); font-size: 11px }
+
 .qa-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
 .qa-back, .qa-continue { font-size: 10px; padding: 8px 12px }
