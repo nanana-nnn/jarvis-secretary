@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+import json
 import logging
+import re
 import os
 import shlex
 import signal
@@ -28,14 +30,56 @@ from pathlib import Path
 
 logger = logging.getLogger("uvicorn.error")
 
+HEX6 = re.compile(r"^[0-9a-fA-F]{6}$")
+
 # worker がジョブを拾いにいく間隔。人が話しかける間隔に対して十分細かい
 POLL_S = 0.1
 
 # 常駐ターミナルの起動。{worker} には下の worker スクリプトのパスが入る。
-# foot はシェルではないので、worker を bash に渡す
-DEFAULT_LAUNCH = "foot --title {title} bash {worker}"
+# foot はシェルではないので、worker を bash に渡す。
+# {colours} には配色の -o 指定が入る（下の colour_options）
+DEFAULT_LAUNCH = "foot --title {title} {colours} bash {worker}"
 
 WORKER_TITLE = "JARVIS"
+
+# caelestia が壁紙から作る配色。**`~/.config/foot/foot.ini` には色が無い**ので
+# （[colors-dark] に alpha と blur しか書かれていない）、渡さないと foot 内蔵の
+# 暗い既定色のままになる。ライトテーマなのにターミナルだけ黒い、という
+# 食い違いが起きる（2026-09-05、実機で指摘された）。
+# caelestia 自身のパネルも alpha しか渡していないので、ここは真似ではなく足す。
+# foot は `-o colors.regular0=RRGGBB` の形（# は付けない）で受ける
+SCHEME_PATH = Path.home() / ".local/state/caelestia/scheme.json"
+
+
+def colour_options(scheme_path: Path | None = None) -> str:
+    """配色を foot の -o 指定へ組み立てる。読めなければ空文字（既定色のまま）。
+
+    **開いたあとの色は変わらない。** foot は起動時の指定を持ち続けるので、
+    壁紙を変えたぶんは次にターミナルを開き直したときから反映される。
+    """
+    path = scheme_path or SCHEME_PATH
+    try:
+        colours = json.loads(path.read_text(encoding="utf-8"))["colours"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return ""
+
+    def hex6(key: str) -> str | None:
+        value = colours.get(key)
+        return value.lower() if isinstance(value, str) and HEX6.fullmatch(value) else None
+
+    options: list[str] = []
+    background, foreground = hex6("background"), hex6("onSurface")
+    if background:
+        options.append(f"colors.background={background}")
+    if foreground:
+        options.append(f"colors.foreground={foreground}")
+    # term0〜7 が通常色、term8〜15 が明色。欠けていたらその色だけ既定に任せる
+    for index in range(16):
+        value = hex6(f"term{index}")
+        if value:
+            slot = f"regular{index}" if index < 8 else f"bright{index - 8}"
+            options.append(f"colors.{slot}={value}")
+    return " ".join(f"-o {shlex.quote(option)}" for option in options)
 
 # ターミナルの中で回り続ける worker。
 #   - ジョブ（*.sh）を古い順に1つずつ実行する（§10「同時実行は1ジョブ」）
@@ -125,6 +169,7 @@ class VisibleTerminal:
         self._worker_file.write_text(WORKER_SCRIPT, encoding="utf-8")
         command = self.launch.format(
             title=shlex.quote(WORKER_TITLE),
+            colours=colour_options(),
             worker=(f"{shlex.quote(str(self._worker_file))} "
                     f"{shlex.quote(str(self.queue))} {shlex.quote(str(self._pid_file))}"),
         )

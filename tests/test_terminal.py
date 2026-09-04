@@ -8,11 +8,12 @@ Python 側が頼っている約束はすべて本物と同じ経路を通る。
 """
 import asyncio
 from functools import wraps
+import json
 from pathlib import Path
 
 import pytest
 
-from server.terminal import VisibleTerminal
+from server.terminal import VisibleTerminal, colour_options
 
 
 def _sync(test):
@@ -172,3 +173,39 @@ async def test_closing_stops_the_worker_loop_too(tmp_path: Path) -> None:
     term.close()
     await asyncio.sleep(0.5)
     assert not Path(f"/proc/{pid}").exists(), "worker が回り続けている"
+
+
+def test_the_terminal_follows_the_wallpaper_colours(tmp_path: Path) -> None:
+    """foot.ini に色が無いので、渡さないと内蔵の暗い既定色になる。
+    ライトテーマなのにターミナルだけ黒い、が起きる（2026-09-05 実機で指摘）。"""
+    scheme = tmp_path / "scheme.json"
+    scheme.write_text(json.dumps({"mode": "light", "colours": {
+        "background": "F8F9FE", "onSurface": "2d333a",
+        **{f"term{i}": f"{i:02x}00ff" for i in range(16)},
+    }}), encoding="utf-8")
+
+    options = colour_options(scheme)
+    assert "-o colors.background=f8f9fe" in options, "大文字のまま渡している"
+    assert "-o colors.foreground=2d333a" in options
+    assert "-o colors.regular0=0000ff" in options    # term0 が通常色の0番
+    assert "-o colors.bright0=0800ff" in options     # term8 が明色の0番
+    assert "-o colors.regular8=" not in options, "regular は 0〜7 まで"
+
+
+def test_a_broken_scheme_leaves_the_default_colours(tmp_path: Path) -> None:
+    """配色が読めなくてもターミナルは開く。色だけ既定に落ちる。"""
+    assert colour_options(tmp_path / "missing.json") == ""
+
+    broken = tmp_path / "broken.json"
+    broken.write_text("{ not json", encoding="utf-8")
+    assert colour_options(broken) == ""
+
+    # 1色だけ壊れていても、残りは渡す（全部捨てて真っ黒に戻さない）
+    partial = tmp_path / "partial.json"
+    partial.write_text(json.dumps({"colours": {
+        "background": "ffffff", "onSurface": "not-a-colour", "term0": "123456",
+    }}), encoding="utf-8")
+    options = colour_options(partial)
+    assert "colors.background=ffffff" in options
+    assert "colors.foreground" not in options
+    assert "colors.regular0=123456" in options
