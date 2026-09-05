@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import os
 from pathlib import Path
 import sys
+from time import monotonic
 
 from .browser import LAYOUTS, PROFILE_DIR, VisibleBrowser
 
@@ -116,27 +118,93 @@ DRAFT_BUTTON_SELECTORS = (
     '[data-testid="save-draft"]',
 )
 EDITOR_WAIT_MS = 20000
+# 編集URLを開き直したとき、画像ボタンが出るまでの待ち（実機で約5秒）
+EDITOR_SETTLE_MS = 7000
+# 画像を渡してから確定ダイアログが出るまで（実測6〜7秒）
+HEADER_APPLY_WAIT_MS = 20000
+# 確定と見出し画像のどちらが先に出るかを見にいく間隔
+HEADER_POLL_MS = 500
 
 # 見出し画像専用の導線。本文の画像ボタンや公開画面には進まない。
+# 見出し画像の入口。**題名の上にある丸いアイコン1個だけ**で、文字は無い。
+# aria-label は button ではなく中の svg に付いている（2026-09-05、実機のDOMで確認）。
+# 「見出し画像を追加」という文字列はどこにも出ないので、それで探すと必ず外れる
 HEADER_BUTTON_SELECTORS = (
-    'button[aria-label="見出し画像を追加"]',
-    'button:has-text("見出し画像を追加")',
-    '[data-testid="add-header-image"]',
+    'button:has(svg[aria-label="画像を追加"])',
+    'svg[aria-label="画像を追加"]',
+    'button[aria-label="画像を追加"]',
 )
+# 押すと出るメニューは3つ（画像をアップロード／記事にあう画像を選ぶ／
+# Adobe Expressで画像をつくる）。**ローカルから入れるのは先頭だけ。**
+# 推奨サイズは 1280×670px とメニューに書かれている
 HEADER_UPLOAD_SELECTORS = (
     'button:has-text("画像をアップロード")',
     '[role="menuitem"]:has-text("画像をアップロード")',
     'label:has-text("画像をアップロード")',
 )
+# 位置合わせのUIの確定ボタン。**素の `button:text-is("保存")` を足さないこと。**
+# それは DRAFT_BUTTON_SELECTORS[1] と同じで、位置合わせの段で下書き保存を押しうる
+# （2026-09-05、tests/test_note_draft.py が実際に捕まえた）。必ず内側へ限定する。
+# `[role="dialog"]` を必須にしない（note の位置合わせはダイアログ役割を持たないことがある）
 HEADER_APPLY_SELECTORS = (
     '[role="dialog"] button:text-is("保存")',
-    '[role="dialog"] button:text-is("適用")',
-    '[role="dialog"] button:text-is("決定")',
+    '[aria-modal="true"] button:text-is("保存")',
+    'button:text-is("適用")',
+    'button:text-is("決定")',
 )
+# **入ったかどうかは、これで見る。** note は見出し画像を入れると
+# `alt="eyecatch"` の img を置き、代わりに「画像を追加」ボタンを消す
+# （2026-09-05、実機の編集画面を開き直して確認）
 HEADER_PREVIEW_SELECTORS = (
+    'img[alt="eyecatch"]',
     '[data-testid="header-image"] img',
     'img[alt="見出し画像"]',
 )
+# 画像を渡してから見出し画像が乗るまで（実測6〜7秒）
+HEADER_SETTLE_MS = 20000
+
+
+async def _back_to_editor(page, editor_url: str) -> None:
+    """編集画面から流されていたら戻す。
+
+    note は編集URLをプレビュー（`note.com/<user>/n/<key>`）へ飛ばすことがある。
+    2026-09-05 は3回とも見出し画像の前後で飛ばされ、「下書き保存」が見つからず
+    no_draft_button で終わっていた。題・本文・見出し画像は note 側が自動保存
+    しているので、開き直しても消えない（実機で開き直して確認済み）。
+    """
+    # 覚えた場所から動いていなければ何もしない
+    if page.url == editor_url or "editor.note.com" in page.url or "/edit" in page.url:
+        return
+    logger.warning("[NOTE] 編集画面から流された（%s）。開き直す", page.url)
+    await page.goto(editor_url, wait_until="domcontentloaded")
+    await page.wait_for_timeout(EDITOR_SETTLE_MS)
+
+
+async def _confirm_header(page) -> str | None:
+    """確定UIが出たら押す。出ないまま見出し画像が乗ったら押さない。
+
+    **順番が要。確定を先に見ること。** 「画像のサイズの変更」ダイアログの中には
+    見出し画像のプレビューが入っている。先に「入ったか」を見にいくと、
+    ダイアログを開いたまま完了と判定してしまい、そのダイアログが
+    「下書き保存」を覆って押せなくなる（2026-09-05、実機で no_draft_button）。
+
+    逆に、note は渡した時点で見出し画像を入れてしまうこともあり、
+    そのときは確定ダイアログが出ない。どちらが先に現れるかを見て決める。
+    """
+    deadline = monotonic() + HEADER_APPLY_WAIT_MS / 1000
+    while True:
+        found = await _first_visible(page, HEADER_APPLY_SELECTORS, HEADER_POLL_MS)
+        if found is not None:
+            await found[0].click()
+            # 閉じるのを待つ。閉じないまま進むと下書き保存を覆ったままになる
+            with suppress(Exception):
+                await found[0].wait_for(state="hidden", timeout=20000)
+            return "dialog"
+        # 確定は出ていない。もう見出し画像が乗っているなら押すものが無い
+        if await _first_visible(page, HEADER_PREVIEW_SELECTORS, HEADER_POLL_MS) is not None:
+            return "direct"
+        if monotonic() >= deadline:
+            return None
 
 
 async def set_header_image(page, image_path: Path) -> dict:
@@ -160,16 +228,14 @@ async def set_header_image(page, image_path: Path) -> dict:
         chooser = await chooser_info.value
         await chooser.set_files(str(image_path))
         stage = "header_apply"
-        found = await _first_visible(page, HEADER_APPLY_SELECTORS, 5000)
-        if found is None:
+        applied = await _confirm_header(page)
+        if applied is None:
             return {"ok": False, "error": "no_header_apply", "url": page.url}
-        await found[0].click()
-        await found[0].wait_for(state="hidden", timeout=20000)
         stage = "header_preview"
-        found = await _first_visible(page, HEADER_PREVIEW_SELECTORS, 5000)
+        found = await _first_visible(page, HEADER_PREVIEW_SELECTORS, HEADER_SETTLE_MS)
         if found is None:
             return {"ok": False, "error": "no_header_preview", "url": page.url}
-        return {"ok": True}
+        return {"ok": True, "applied": applied}
     except Exception:
         logger.exception("[NOTE] failed at %s", stage)
         return {"ok": False, "error": f"{stage}_failed", "url": page.url}
@@ -245,16 +311,23 @@ async def create_draft(browser: VisibleBrowser, title: str, body: str,
         if line:
             await page.keyboard.type(line, delay=TYPE_DELAY_MS)
 
+    # 見出し画像のあいだにプレビューへ飛ばされることがある。戻る先を覚えておく
+    editor_url = page.url
+
     # **浮遊ツールバーをどける。** 本文を打った直後は note の書式ツールバーが
     # 出ていて、狭い窓では「下書き保存」に重なりクリックを横取りする
     # （2026-09-05、4分割で実際に落ちた）。選択を外してから押す
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(400)
+    applied = None
     if image_path is not None:
         image_result = await set_header_image(page, image_path)
         if not image_result["ok"]:
             return {**image_result, "title": title,
                     "message": "見出し画像の設定を確認できません。同じ編集URLで確認してください。新規作成の再実行はしないでください"}
+        # どちらの道で入ったかを結果に残す（実機の切り分け用）
+        applied = image_result.get("applied")
+    await _back_to_editor(page, editor_url)
     found = await _first_visible(page, DRAFT_BUTTON_SELECTORS, 5000)
     if found is None:
         return {"ok": False, "error": "no_draft_button", "url": page.url,
@@ -263,7 +336,40 @@ async def create_draft(browser: VisibleBrowser, title: str, body: str,
     await button.click()
     # 保存されると編集URL（/notes/<key>/edit）に落ち着く。少し待って現況を返す
     await page.wait_for_timeout(4000)
-    return {"ok": True, "url": page.url, "title": title}
+    result = {"ok": True, "url": page.url, "title": title}
+    if applied is not None:
+        result["applied"] = applied
+    return result
+
+
+async def attach_header(browser: VisibleBrowser, edit_url: str, image_path: str | Path) -> dict:
+    """**既にある下書き**に見出し画像を足して保存する（2026-09-05）。
+
+    `draft` の途中で見出し画像に失敗したときの受け皿。**新規記事を作らない。**
+    失敗した記事を作り直すと下書きが増えるだけなので、必ず同じ編集URLへ戻る
+    （examples/ の手順と Vault の [[自動操作は公開に触れない]] のとおり）。
+    """
+    image = Path(image_path).expanduser().resolve()
+    if not image.is_file() or image.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        return {"ok": False, "error": "invalid_header_image"}
+    page = await browser.page()
+    if not await logged_in(page):
+        return {"ok": False, "error": "not_logged_in"}
+    await page.goto(edit_url, wait_until="domcontentloaded")
+    await page.wait_for_timeout(EDITOR_SETTLE_MS)
+    await _back_to_editor(page, edit_url)
+    await browser.fit_page(page)
+    image_result = await set_header_image(page, image)
+    if not image_result["ok"]:
+        return {**image_result, "url": page.url,
+                "message": "見出し画像を入れられません。同じ編集URLで確認してください。新規作成の再実行はしないでください"}
+    await _back_to_editor(page, edit_url)
+    found = await _first_visible(page, DRAFT_BUTTON_SELECTORS, 5000)
+    if found is None:
+        return {"ok": False, "error": "no_draft_button", "url": page.url}
+    await found[0].click()
+    await page.wait_for_timeout(4000)
+    return {"ok": True, "url": page.url, "applied": image_result.get("applied")}
 
 
 async def login_by_hand(profile_dir: Path | None = None) -> bool:
@@ -314,6 +420,12 @@ async def main(argv: list[str]) -> int:
     # 置き場所（2026-09-05、本人の希望：分割なし／2分割／4分割を臨機応変に）
     draft.add_argument("--layout", default=None, choices=sorted(LAYOUTS),
                        help="窓の置き場所。既定は full")
+    # 途中で見出し画像に失敗した下書きの受け皿。**新規記事を作らない**
+    header = sub.add_parser("header")
+    header.add_argument("--url", required=True, help="既にある下書きの編集URL")
+    header.add_argument("--image", required=True)
+    header.add_argument("--keep-open", type=int, default=60)
+    header.add_argument("--layout", default=None, choices=sorted(LAYOUTS))
     args = parser.parse_args(argv)
 
     browser = VisibleBrowser(layout=getattr(args, "layout", None))
@@ -324,6 +436,11 @@ async def main(argv: list[str]) -> int:
             return 0 if await wait_for_login(browser, args.wait) else 1
         if args.layout:
             await browser.set_layout(args.layout)
+        if args.command == "header":
+            result = await attach_header(browser, args.url, args.image)
+            print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+            await asyncio.sleep(args.keep_open)
+            return 0 if result.get("ok") else 1
         body = Path(args.body_file).read_text(encoding="utf-8")
         result = await create_draft(browser, args.title, body, header_image=args.header_image)
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)

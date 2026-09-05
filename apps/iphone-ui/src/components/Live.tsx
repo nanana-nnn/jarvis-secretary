@@ -34,8 +34,20 @@ const APPS: { key: string; icon: string; label: string }[] = [
 const PHONE = "\u{f011c}";
 const GIT = "\ue702";
 
+/**
+ * 起きているあいだだけ出す操作ボタン（2026-09-05、本人の指定）。
+ * スタンバイへ戻ると消える。**押して何が起きるかは App 側が決める。**
+ * ここは並べるだけにして、3段目が動作を知らないようにしておく。
+ *
+ * アイコンは同梱サブセットに入れた4字。**足すときは public/fonts/README.md の
+ * `$ICONS` を先に直してフォントを作り直すこと。** 入っていない字は豆腐にならず
+ * 幅9pxの空白として出るので、画面を見ても気づけない（2026-09-05 に実測で発覚）。
+ */
+export type LiveAction = { key: string; icon: string; label: string; onPress: () => void };
+
 // state は表示名（"STANDBY" など）。状態機械の値そのものではない
-export function Live({ state, code, live, caption }: { state: string; code: string; live: LiveFacts; caption?: string }) {
+export function Live({ state, code, live, caption, actions }:
+  { state: string; code: string; live: LiveFacts; caption?: string; actions?: LiveAction[] }) {
   // SNS に上げた小さい画像でも何のアイコンか分かるよう、下に名前を添える
   const dots = APPS.map(({ key, icon, label }) => {
     const app: AppState = live.apps[key] ?? { alive: false, busy: false };
@@ -60,5 +72,16 @@ export function Live({ state, code, live, caption }: { state: string; code: stri
       <span className={live.phones > 0 ? "on" : ""}>{PHONE} {live.phones}</span>
       <span className={live.vault.dirty > 0 ? "on" : ""}>{GIT} {vault}</span>
     </div>
+    {actions?.length ? <div className="live-actions">
+      {actions.map(action => (
+        // 文字は添えない（2026-09-05、本人の指定）。上の .dot は SNS 用に
+        // 名前を添えているが、こちらは押すためのものなので絵だけにする。
+        // 読み上げ用の名前は aria-label に残す
+        <button key={action.key} type="button" aria-label={action.label}
+                title={action.label} onClick={action.onPress}>
+          <i>{action.icon}</i>
+        </button>
+      ))}
+    </div> : null}
   </section>;
 }

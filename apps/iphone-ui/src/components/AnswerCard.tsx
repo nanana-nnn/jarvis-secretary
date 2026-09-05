@@ -20,10 +20,21 @@ export type QAExchange = { id: number; question: string; lines: string[]; phase:
 
 const AUTO_FOLLOW_THRESHOLD_PX = 24;
 
+/**
+ * `onSend` を渡すと、下に打ち込み欄が出る（2026-09-05、本人の指定「チャット」）。
+ * **浮かせた窓は作らない。** 質問と回答が積み上がるこのカードが既にチャットなので、
+ * ここへ口を足すだけにする。窓を浮かせると、どの段も同じ枠という前提から外れ、
+ * iOS standalone の位置ズレ（2026-09-02、101px）を踏み直すことになる。
+ *
+ * 打ち込んだ文は声と同じ経路（サーバーの `text.input` → ルーター → Codex）へ流す。
+ * 画面側に2つ目の判定を作らない。
+ */
 export function AnswerCard(
-  { exchanges, onBack, onContinue, obsidianActive }:
-  { exchanges: QAExchange[]; onBack: () => void; onContinue: () => void; obsidianActive: boolean },
+  { exchanges, onBack, onContinue, obsidianActive, onSend }:
+  { exchanges: QAExchange[]; onBack: () => void; onContinue: () => void;
+    obsidianActive: boolean; onSend?: (text: string) => void },
 ) {
+  const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 利用者が上へスクロールしたら自動追従を止める（DESIGN.md）。
   // 新しい発話が始まったら（exchanges の件数が増えたら）また追従に戻す
@@ -73,6 +84,20 @@ export function AnswerCard(
         </div>;
       })}
     </div>
+    {onSend ? <form className="qa-compose" onSubmit={event => {
+      event.preventDefault();
+      const text = draft.trim();
+      if (!text) return;
+      setDraft("");
+      onSend(text);
+    }}>
+      {/* プロンプト行と同じ字を頭に置いて、打つ場所だと分かるようにする */}
+      <span className="qa-badge" aria-hidden="true">▶</span>
+      <input value={draft} onChange={event => setDraft(event.target.value)}
+             placeholder="なにする？" aria-label="Codex への指示"
+             enterKeyHint="send" autoComplete="off" autoCorrect="off" />
+      <button type="submit" className="primary-action" disabled={!draft.trim()}>送る</button>
+    </form> : null}
     {done ? <div className="qa-actions">
       <button className="qa-back" onClick={onBack}>戻る</button>
       <button className="qa-continue primary-action" onClick={onContinue}>続けて聞く</button>

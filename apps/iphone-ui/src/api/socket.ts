@@ -46,10 +46,12 @@ export class ReconnectingSocket {
     socket.addEventListener("message", event => {
       try { this.onMessage?.(JSON.parse(String(event.data))); } catch { /* Ignore malformed server events. */ }
     });
-    socket.addEventListener("close", () => {
-      window.clearInterval(this.heartbeat);
+    socket.addEventListener("close", event => {
       if (this.stopped || this.socket !== socket) return;
+      window.clearInterval(this.heartbeat);
       this.onStatus("closed");
+      // 新しい端末に譲った接続は再取得しない。通常の切断は再接続する。
+      if (event.code === 4000) { this.stopped = true; return; }
       this.timer = window.setTimeout(() => this.connect(), Math.min(1000 * 2 ** this.retry++, 30000));
     });
     socket.addEventListener("error", () => socket.close());

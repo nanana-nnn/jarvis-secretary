@@ -14,6 +14,7 @@ watch_scheme が両方を見張って配信済み）。
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import hashlib
 import logging
 import subprocess
@@ -35,6 +36,13 @@ THUMB_MAX = 320
 THUMB_QUALITY = 65
 # 一覧の上限。これ以上あっても指で探せない
 MAX_ITEMS = 120
+
+# caelestia が今出している壁紙。配色と同じタイミングで書き換わる
+CURRENT_PATH = Path.home() / ".local/state/caelestia/wallpaper/path.txt"
+# 変換済みの置き場。元は数MBのこともあるので、そのままは配らない
+CACHE = Path.home() / ".cache/jarvis-secretary"
+CURRENT_MAX = 1400          # 長辺。iPhone で見るには十分で、転送量を抑えられる
+CURRENT_QUALITY = 72
 
 
 def _identifier(path: Path) -> str:
@@ -124,3 +132,56 @@ async def apply(path: Path) -> bool:
         return False
     logger.info("[PAPER] switched to %s", path.name)
     return True
+
+
+# --- 今出ている壁紙（背景として iPhone へ配るぶん）------------------------
+
+
+def current_source() -> Path | None:
+    """caelestia が今出している壁紙の実体パス。読めなければ None。"""
+    try:
+        raw = CURRENT_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    source = Path(raw)
+    return source if source.is_file() else None
+
+
+def current_version(source: Path | None) -> str:
+    """壁紙が変わったことを一意に表す札。パスと更新時刻から作る。"""
+    if source is None:
+        return ""
+    try:
+        stamp = source.stat().st_mtime_ns
+    except OSError:
+        return ""
+    return hashlib.sha256(f"{source}:{stamp}".encode()).hexdigest()[:16]
+
+
+def current_webp(source: Path | None, version: str) -> Path | None:
+    """壁紙を iPhone 向けの WebP に落として返す。同じ版があれば作り直さない。
+
+    元は数MBになることがある。PNG のまま置いて初回表示が固まった事故があるので
+    （2026-08-29、2枚で 6.3MB）、必ず縮めてから配る。
+    """
+    if source is None or not version:
+        return None
+    CACHE.mkdir(parents=True, exist_ok=True)
+    out = CACHE / f"wallpaper-{version}.webp"
+    if out.is_file():
+        return out
+    try:
+        subprocess.run(
+            ["magick", str(source), "-auto-orient",
+             "-resize", f"{CURRENT_MAX}x{CURRENT_MAX}>",
+             "-quality", str(CURRENT_QUALITY), str(out)],
+            check=True, capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # 古い版を片付ける（壁紙を変えるたびに溜まるため）
+    for stale in CACHE.glob("wallpaper-*.webp"):
+        if stale != out:
+            with suppress(OSError):
+                stale.unlink()
+    return out if out.is_file() else None

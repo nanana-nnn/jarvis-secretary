@@ -18,7 +18,7 @@
 
 ```fish
 set UNI "U+0020-007E,U+00A0,U+2500,U+2502,U+256D,U+256E,U+256F,U+2570,U+2022,U+25CF,U+2026,U+2588,U+2580,U+2584,U+25B6"
-set ICONS "U+F473,U+E385,U+F489,U+EFC5,U+F487,U+F007,U+F108,U+F0EC0,U+F0AA2,U+E6BB,U+EC81,U+EC82,U+F268,U+EA85,U+F011C,U+E702"
+set ICONS "U+F473,U+E385,U+F489,U+EFC5,U+F487,U+F007,U+F108,U+F0EC0,U+F0AA2,U+E6BB,U+EC81,U+EC82,U+F268,U+EA85,U+F011C,U+E702,U+F02E9,U+F0B79,U+F0AE,U+F0904"
 pyftsubset /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Regular.ttf \
   --unicodes="$UNI,$ICONS" --layout-features= --no-hinting --desubroutinize \
   --flavor=woff2 --output-file=jbmono-nerd-regular.woff2
@@ -36,6 +36,9 @@ pyftsubset /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Regular.ttf \
   `~/.config/starship.toml` の `[cmd_duration]` と同じ字（2026-09-02追加）
 - `U+25B6`（▶）… 同じくプロンプト行の矢印。フォールバックフォントでも表示は
   できていたが、字送りを他の字と揃えるため本体へ入れた
+- `U+F02E9 U+F0B79 U+F0AE U+F0904` … 3段目の操作ボタン4つ（背景／チャット／
+  タスク／待機）。`Live.tsx` の `ACTIONS`。2026-09-05 に追加。
+  候補20字を元フォントで一覧に描いて見比べてから選んだ
 - `U+F007,U+F108,U+F0EC0` … 出どころ未確認の3字。将来消えたら描いて確認する
 
 2026-08-31、記憶で書いたら md-brain のつもりが再生ボタン、sparkle のつもりが

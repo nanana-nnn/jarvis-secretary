@@ -17,7 +17,7 @@ from server.terminal import VisibleTerminal, colour_options
 
 
 def _sync(test):
-    """非同期のテストを普通のテストとして回す（tests/test_briefing.py と同じ理由）。"""
+    """非同期のテストを普通のテストとして回す（pytest-asyncio を足さずに済ませる）。"""
     @wraps(test)
     def run(*args, **kwargs):
         return asyncio.run(test(*args, **kwargs))

@@ -14,7 +14,7 @@ from typing import Literal
 
 # WALLPAPER は PC の見た目を変える操作（2026-09-05）。Vault とも Codex とも
 # 関係がないので、判定の一番手前で分けて、専用の画面（スライダー）へ渡す
-Intent = Literal["SYSTEM", "WALLPAPER", "CAPTURE", "EXECUTE", "DECIDE", "ASK"]
+Intent = Literal["SYSTEM", "WALLPAPER", "NOTE", "CAPTURE", "EXECUTE", "DECIDE", "ASK"]
 Mode = Literal["read_only", "propose_write"]
 
 # 直接答えられる問い。ここに当たれば Codex を起動しない
@@ -33,7 +33,26 @@ class Route:
 # 壁紙を選びたい合図。**RULES より先に見る。**
 # 「壁紙変えて」は EXECUTE の「変えて」に当たってしまい、Codex に Vault を
 # 書き換えさせる話になってしまう（2026-09-05）。ここで先に捕まえる
-WALLPAPER_WORDS: tuple[str, ...] = ("壁紙", "背景", "かべがみ")
+# 「背景」も同じ意味で受ける（2026-09-05、本人の指定）。
+#
+# **後ろ3つは faster-whisper の聞き間違いをそのまま入れてある。** 実機のログで
+# 「壁紙替えたい」5回のうち3回が『壁が見替えたい』『風が見かえたい』になり、
+# WALLPAPER に当たらず ASK へ落ちていた（2026-09-05 実測）。認識精度を上げる
+# より、出た誤りを拾うほうが確実で速い。**推測で足さないこと。**
+# ログに実際に出たものだけをここへ入れる。
+WALLPAPER_WORDS: tuple[str, ...] = (
+    "壁紙", "背景", "かべがみ", "はいけい",
+    "壁が見", "風が見",
+)
+
+# note の下書きを頼まれた合図（2026-09-05）。**RULES より先に見る。**
+# 「note書いて」は CAPTURE の「書いて」に当たり、Vault へ記録する話になってしまう
+# （実測：「JARVISのnote書いて」→ CAPTURE/propose_write）。ここで先に捕まえる。
+#
+# **ひらがな・カタカナの「ノート」は入れない。** Vault のノートと区別が付かず、
+# 「今日のデイリーノートに書いて」まで note の下書きになる。
+# 聞き間違いが出たら、壁紙と同じく実機ログで見たものだけを足す
+NOTE_WORDS: tuple[str, ...] = ("note", "ノート記事", "note記事")
 
 # §9 の表。左が分類、右が手がかり。**上から順に見る**（SYSTEM が最優先）
 RULES: list[tuple[Intent, Mode, tuple[str, ...]]] = [
@@ -72,6 +91,13 @@ def route(text: str) -> Route:
     """発話を分類する。どれにも当たらなければ §9 のとおり ASK を既定にする。"""
     normalised = text.strip()
     long = _is_long(normalised)
+
+    # note も RULES より先。下の CAPTURE（「書いて」）に食われないようにする。
+    # 記事を書くのは分単位かかるので long=True（経過を送り「やめて」で止める）
+    lowered = text.lower()
+    for word in NOTE_WORDS:
+        if word.lower() in lowered:
+            return Route(intent="NOTE", mode="note", direct=None, matched=word, long=True)
 
     # 壁紙は RULES より先。下の EXECUTE（「変えて」）に食われないようにする
     for word in WALLPAPER_WORDS:

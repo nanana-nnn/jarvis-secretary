@@ -9,7 +9,8 @@ type Props = { state: SecretaryState };
  * 実物は `~/.config/caelestia/sysmon-watch.sh dots` が起動する **lavat**
  * （`lavat -g -c 615a7a -k 615a7a`）で、sysmon-dots.py ではない。
  * lavat が入っていない環境向けのフォールバックが sysmon-dots.py なので、
- * DESIGN.md §15.1 が移植先として挙げていたのは実際には画面に出ていない方だった。
+ * 当時の DESIGN.md §15.1 が移植先として挙げていたのは実際には画面に出ていない方だった
+ * （その節は docs/archive/2026-08-30-visual-handover.md へ退避。正本は §15.1）。
  *
  * lavat はメタボールのラバライトで、音には一切反応せず常に動き続ける。
  * 値はすべて lavat.c v3.0.0 の既定値そのまま（下のコメントに対応箇所を書いた）。

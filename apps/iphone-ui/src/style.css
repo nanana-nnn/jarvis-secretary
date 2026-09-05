@@ -222,9 +222,14 @@ button { font: inherit; color: inherit }
 /* 高さの切り落としは内側の .fetch-clip が持つ。
    **.fetch 自身に overflow:hidden を置かないこと。** 置くと .card-glow の
    発光層（::before, inset:-4px）まで一緒に切られ、光が消える（2026-09-02） */
-.fetch-clip { display: grid; justify-items: center; gap: 4px; width: 100%;
+/* 行送りは 1.24 → 1.14、gap も 4 → 2（2026-09-05）。wake の1行を足したら 13行になり、
+   iPhone 13 Pro（390×844）で **9px はみ出して箱の下の罫線が切れた**（実測）。
+   文字を小さくすると37桁の箱が読みにくくなるので、字の大きさは変えずに
+   行間だけ詰めた。罫線とブロック文字は行間を詰めても潰れない。
+   **行を増やすときは必ず測り直すこと**（scripts/ の実測手順と同じやり方）。 */
+.fetch-clip { display: grid; justify-items: center; gap: 2px; width: 100%;
   min-height: 0; overflow: hidden;
-  font-size: clamp(8px, 3.9vw, 16px); line-height: 1.24; white-space: pre }
+  font-size: clamp(8px, 3.9vw, 16px); line-height: 1.14; white-space: pre }
 /* pre は UA 既定の font-family: monospace が継承より強いので、明示的に当て直す。
    忘れると枠線だけ別フォントに落ちて送りが2倍になり、桁が崩れる */
 .fetch-logo, .fetch-box { margin: 0; font-family: var(--mono); font-size: inherit; line-height: inherit }
@@ -338,6 +343,24 @@ button { font: inherit; color: inherit }
   animation: qa-breathe 1.2s ease-in-out infinite }
 .paper-empty { margin: auto; color: var(--scheme-muted); font-size: 11px }
 
+/* 打ち込み欄（2026-09-05）。カードの中に置く。**浮かせない。**
+   キーボードが出ると visualViewport が縮むが、.shell は 100% 基準なので
+   段の高さは変わらない（fixed にすると iOS で下がツールバーの下へ回り込む） */
+.qa-compose { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid var(--scheme-outline) }
+.qa-compose input {
+  flex: 1; min-width: 0; padding: 7px 10px;
+  border: 1px solid var(--scheme-outline); border-radius: 10px;
+  background: color-mix(in srgb, var(--scheme-surface) 60%, transparent);
+  color: var(--scheme-text); font-family: var(--mono);
+  /* iOS は 16px 未満の入力欄で自動的に拡大する。桁が崩れるので下限を守る */
+  font-size: 16px;
+}
+.qa-compose input::placeholder { color: var(--scheme-outline) }
+.qa-compose input:focus { outline: none; border-color: var(--scheme-primary) }
+.qa-compose button { padding: 7px 12px; border-radius: 10px; font-size: clamp(10px, 3vw, 13px) }
+.qa-compose button:disabled { opacity: .4 }
+
 .qa-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--scheme-outline) 40%, transparent) }
 .qa-back, .qa-continue { font-size: 10px; padding: 8px 12px }
@@ -369,6 +392,24 @@ button { font: inherit; color: inherit }
 
 .live-meta { display: flex; gap: 14px; margin-top: 2px; color: var(--scheme-outline); font-size: clamp(8px, 2.7vw, 11px); letter-spacing: .06em }
 .live-meta .on { color: var(--scheme-primary) }
+
+/* 起きているあいだだけ出す操作ボタン（2026-09-05、本人の指定）。
+   上の .dot は「実測の表示」で押せない。こちらは押せるものなので、
+   **見た目をはっきり分ける**（枠を持たせ、色を本文側に寄せる）。
+   アイコンは .dot の半分以下にして、状態表示のほうが主役のままにする。 */
+.live-actions { display: flex; gap: 10px; margin-top: 8px }
+.live-actions button {
+  display: grid; place-items: center;
+  /* 文字を外したぶん、指で押せる大きさを寸法で確保する（44px 目安） */
+  width: 44px; height: 40px; padding: 0;
+  border: 1px solid var(--scheme-outline); border-radius: 12px;
+  background: transparent; color: var(--scheme-muted);
+  font-family: inherit; cursor: pointer;
+  transition: color .2s ease, border-color .2s ease, background .2s ease;
+}
+.live-actions button:active { color: var(--scheme-primary); border-color: var(--scheme-primary);
+  background: color-mix(in srgb, var(--scheme-primary) 12%, transparent) }
+.live-actions i { font-style: normal; font-size: clamp(16px, 5.6vw, 24px); line-height: 1 }
 
 /* ツールバーぶん(lvh-dvh)を操作列の下に足して、中身を見える範囲へ収める。
    横画面・standalone では差が 0 になり、そのまま下まで使える。

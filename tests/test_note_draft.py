@@ -210,10 +210,18 @@ class FakeChooserEvent:
 
 
 class HeaderPage(FakePage):
-    def __init__(self, present):
+    """見出し画像のUIを持つ画面。
+
+    note には**2通りある**（2026-09-05、実機で確認）。渡した時点で見出し画像が
+    入る道と、「画像のサイズの変更」の確定を挟む道。`preview_on_apply` を渡すと
+    後者になる（確定を押すまで見出し画像は現れない）。
+    """
+
+    def __init__(self, present, preview_on_apply=None):
         super().__init__(present)
         self.uploaded = []
         self.choosing = False
+        self.preview_on_apply = set(preview_on_apply or ())
 
     def expect_file_chooser(self, timeout):
         return FakeChooserEvent(self)
@@ -228,8 +236,12 @@ class HeaderPage(FakePage):
             if selector in note_draft.HEADER_APPLY_SELECTORS:
                 assert len(self.uploaded) == 1
             if selector in note_draft.DRAFT_BUTTON_SELECTORS:
-                assert any(s in self.clicked for s in note_draft.HEADER_APPLY_SELECTORS)
+                # 確定ダイアログは出ないことがあるので「押したか」では縛らない。
+                # **画像を渡し終えてから保存する**という順序だけを固定する
+                assert len(self.uploaded) == 1
             await original()
+            if selector in note_draft.HEADER_APPLY_SELECTORS:
+                self.present |= self.preview_on_apply
         locator.click = click
         return locator
 
@@ -252,27 +264,62 @@ def header_image(tmp_path):
 
 
 @_sync
-async def test_見出し画像を一度アップロードして適用後に下書き保存(header_image):
+async def test_確定が出ていて見出し画像も見えているなら確定を押す(header_image):
+    """**順番の固定**（2026-09-05、実機で発覚）。「画像のサイズの変更」の中には
+    見出し画像のプレビューが入っている。先に「入ったか」を見にいくと、
+    ダイアログを開いたまま完了と判定し、それが「下書き保存」を覆って
+    押せなくなる（実機で no_draft_button）。確定を先に見ること。"""
     page = HeaderPage(HEADER_EDITOR | {'button:text-is("公開に進む")'})
     result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
     assert result["ok"] is True
+    assert result["applied"] == "dialog"
+    assert note_draft.HEADER_APPLY_SELECTORS[0] in page.clicked
+    assert page.clicked[-1] == note_draft.DRAFT_BUTTON_SELECTORS[0]
+
+
+@_sync
+async def test_確定が出ないまま見出し画像が入ったら押しにいかない(header_image):
+    """note は渡した時点で入れてしまうこともある。その道では確定ボタンが
+    どこにも無いので、出るものとして待つと失敗になる。"""
+    page = HeaderPage((HEADER_EDITOR - set(note_draft.HEADER_APPLY_SELECTORS))
+                      | {'button:text-is("公開に進む")'})
+    result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
+    assert result["ok"] is True
+    assert result["applied"] == "direct"
     assert page.uploaded == [str(header_image)]
     assert page.visited == [note_draft.NEW_TEXT]
     assert page.clicked[-1] == note_draft.DRAFT_BUTTON_SELECTORS[0]
+    # 確定ダイアログは出ていないのだから、押しにいかない
+    assert not any(s in page.clicked for s in note_draft.HEADER_APPLY_SELECTORS)
     assert not any("公開" in s for s in page.clicked)
     assert page.delays == [note_draft.TYPE_DELAY_MS] * 2
 
 
 @_sync
+async def test_確定ダイアログが出たときは押してから下書き保存(header_image):
+    """「画像のサイズの変更」が出る道。押すまで見出し画像は現れない。"""
+    page = HeaderPage(
+        (HEADER_EDITOR - set(note_draft.HEADER_PREVIEW_SELECTORS)) | {'button:text-is("公開に進む")'},
+        preview_on_apply={note_draft.HEADER_PREVIEW_SELECTORS[0]})
+    result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
+    assert result["ok"] is True
+    assert result["applied"] == "dialog"
+    assert note_draft.HEADER_APPLY_SELECTORS[0] in page.clicked
+    assert page.clicked[-1] == note_draft.DRAFT_BUTTON_SELECTORS[0]
+    assert not any("公開" in s for s in page.clicked)
+
+
+@_sync
 async def test_画像の各段階も候補の2つ目で通る(header_image):
-    page = HeaderPage(LOGGED_IN_EDITOR | {
+    page = HeaderPage({
+        *LOGGED_IN_EDITOR,
         note_draft.HEADER_BUTTON_SELECTORS[1],
         note_draft.HEADER_UPLOAD_SELECTORS[1],
         note_draft.HEADER_APPLY_SELECTORS[1],
-        note_draft.HEADER_PREVIEW_SELECTORS[1],
-    })
+    }, preview_on_apply={note_draft.HEADER_PREVIEW_SELECTORS[1]})
     result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
     assert result["ok"] is True
+    assert result["applied"] == "dialog"
 
 
 @pytest.mark.parametrize("selectors,error", [
@@ -283,7 +330,11 @@ async def test_画像の各段階も候補の2つ目で通る(header_image):
 ])
 @_sync
 async def test_画像UIが欠けたら成功扱いせず新規作成もし直さない(header_image, selectors, error):
-    page = HeaderPage(HEADER_EDITOR - set(selectors))
+    # 見出し画像は確定を押すまで現れない側で試す。直接入る側だと
+    # apply が欠けていても成功してしまい、欠落を試したことにならない
+    page = HeaderPage((HEADER_EDITOR - set(note_draft.HEADER_PREVIEW_SELECTORS)) - set(selectors),
+                      preview_on_apply=set() if selectors is note_draft.HEADER_PREVIEW_SELECTORS
+                                       else {note_draft.HEADER_PREVIEW_SELECTORS[0]})
     result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
     assert result["ok"] is False
     assert result["error"] == error

@@ -91,6 +91,27 @@ SCHEMA = {
 }
 
 
+# note の下書き用（2026-09-05）。**題と本文を別々に受け取る。**
+# note 1本ぶんの記事だけを作る。X などSNS向けの短文は作らない（本人の指定）
+# 通常の SCHEMA は summary/spoken_reply しか無く、題を切り出せない
+NOTE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["title", "body", "spoken_reply", "sources"],
+    "properties": {
+        "title": {"type": "string", "description": "noteの題。日本語。40文字程度まで。"},
+        "body": {"type": "string", "description": "noteの本文。日本語。段落は空行で区切る。"},
+        "spoken_reply": {"type": "string", "description": "読み上げ用。日本語80文字程度まで。"},
+        "sources": {"type": "array", "items": {"type": "string"},
+                    "description": "根拠にしたVault内のファイルパス"},
+    },
+}
+
+
+def schema_for(mode: str) -> dict:
+    return NOTE_SCHEMA if mode == "note" else SCHEMA
+
+
 @dataclass
 class AgentResult:
     summary: str
@@ -101,10 +122,38 @@ class AgentResult:
     proposed_root: Path | None = None
     original_contents: dict[str, bytes | None] = field(default_factory=dict)
     error: str | None = None
+    # mode="note" のときだけ入る。noteの下書きへそのまま渡す
+    title: str = ""
+    body: str = ""
+
+
+NOTE_PROMPT = """あなたはこの Obsidian Vault を根拠に、note の記事を書く担当です。
+
+まず `_kit/AI_RULES.md` を読み、その規則に従ってください。
+次に `00_home/home.md`（索引）から、依頼に関係するノートだけを開いてください。
+
+**このセッションは読み取り専用です。ファイルを一切変更しないでください。**
+削除・移動・改名は禁止です。
+
+利用者の発話: 「{text}」
+
+書き方：
+- **出典が言えないことを書かない。** Vault に無い機能・数字・予定を足さない
+- 実測値があるならそれを使う。無い数字を作らない
+- 宣伝文句を並べない。何を作っていて、何が分かったかを書く
+- 親しいタメ口。敬語にしない
+- 本文は400〜700文字。段落は空行で区切る
+- 題は40文字まで。中身を言い当てる。煽らない
+
+最終メッセージは次のJSONだけを返してください。前後に説明やコードフェンスを付けないでください。
+{{"title":"noteの題","body":"noteの本文","spoken_reply":"読み上げ用(日本語80文字程度)","sources":["根拠にしたVault内のファイルパス"]}}
+"""
 
 
 def build_prompt(text: str, mode: str) -> str:
     """§10「プロンプト組み立て」の5点を必ず入れる。"""
+    if mode == "note":
+        return NOTE_PROMPT.format(text=text)
     # propose_write の作業ディレクトリは Vault そのものではなく使い捨てのコピー
     # （§11「エージェントには一時作業領域で変更させ、承認後に Vault へ適用する」）。
     # ここで「変更しないで」と言うと編集が起きず、差分が空になって承認画面が
@@ -167,8 +216,8 @@ class CodexAgent:
 
         use_session=True で、直前の会話の続きとして投げる（2026-09-03）。
         read_only 以外（propose_write は毎回使い捨てコピーが作業ディレクトリに
-        なる）では効かない。先読みブリーフィング（briefing.py）はここを
-        False のままにして、本人の会話へ割り込ませない。
+        なる）では効かない。本人の発話以外からこのメソッドを呼ぶときは
+        False のままにして、本人の会話へ割り込ませないこと。
         """
         async with self._lock:                      # §10「同時実行は1ジョブ」
             return await self._run(text, mode, timeout or self.timeout, use_session and mode == "read_only")
@@ -180,7 +229,7 @@ class CodexAgent:
         out_file = work / "answer.json"
         # 発話は引数に展開しない（§10）。ファイル経由で渡す
         prompt_file.write_text(build_prompt(text, mode), encoding="utf-8")
-        schema_file.write_text(json.dumps(SCHEMA), encoding="utf-8")
+        schema_file.write_text(json.dumps(schema_for(mode)), encoding="utf-8")
 
         # Phase 4: proposal runs must never receive the real Vault as a writable
         # directory.  Copy it before invoking Codex, then keep that copy until
@@ -191,6 +240,8 @@ class CodexAgent:
             proposed_root = work / "vault"
             try:
                 shutil.copytree(self.vault, proposed_root, ignore=shutil.ignore_patterns(".git"))
+                # 実行中の本人の編集を差分に混ぜない。承認時もこの時点と比較する。
+                shutil.copytree(proposed_root, work / "baseline")
             except OSError as exc:
                 shutil.rmtree(work, ignore_errors=True)
                 return AgentResult("", "", error=f"AGENT_FAILED: proposal copy ({exc})")
@@ -251,7 +302,7 @@ class CodexAgent:
                 proposed_root = None
                 return AgentResult("", "", error="AGENT_FAILED: " + (" / ".join(tail) or f"exit {code}"))
 
-            outcome = self._parse(out_file)
+            outcome = self._parse(out_file, mode)
             if proposed_root is not None:
                 if outcome.error:
                     # 答えが読めないまま提案コピーを残すと、承認に出せないまま
@@ -259,9 +310,9 @@ class CodexAgent:
                     shutil.rmtree(work, ignore_errors=True)
                     return outcome
                 outcome.proposed_root = proposed_root
-                outcome.changed_files, outcome.diff = _changes(self.vault, proposed_root)
+                outcome.changed_files, outcome.diff = _changes(work / "baseline", proposed_root)
                 outcome.original_contents = {
-                    relative: (self.vault / relative).read_bytes() if (self.vault / relative).is_file() else None
+                    relative: (work / "baseline" / relative).read_bytes() if (work / "baseline" / relative).is_file() else None
                     for relative in outcome.changed_files
                 }
                 if not outcome.changed_files:
@@ -294,7 +345,7 @@ class CodexAgent:
                 shutil.rmtree(work, ignore_errors=True)
 
     @staticmethod
-    def _parse(out_file: Path) -> AgentResult:
+    def _parse(out_file: Path, mode: str = "read_only") -> AgentResult:
         """返ってきた JSON を読む。読めなければ黙って空を返さず、理由を残す。"""
         try:
             raw = out_file.read_text(encoding="utf-8")
@@ -304,6 +355,17 @@ class CodexAgent:
         if payload is None:
             head = " ".join(raw.split())[:80]
             return AgentResult("", "", error=f"AGENT_FAILED: unreadable answer ({head!r})")
+        if mode == "note":
+            title = str(payload.get("title", "")).strip()
+            body = str(payload.get("body", "")).strip()
+            spoken = str(payload.get("spoken_reply", "")).strip()
+            sources = [s for s in payload.get("sources", []) if isinstance(s, str)]
+            # **題も本文も揃っていないと下書きにできない。** 片方だけで進めると
+            # note に中途半端な記事が残る（作り直さない規則があるので取り返せない）
+            if not title or not body:
+                return AgentResult("", "", error="AGENT_FAILED: note の題か本文が空でした")
+            return AgentResult(summary=title, spoken_reply=spoken or title, sources=sources,
+                               title=title, body=body)
         summary = str(payload.get("summary", "")).strip()
         spoken = str(payload.get("spoken_reply", "")).strip()
         sources = [str(s) for s in payload.get("sources", []) if isinstance(s, str)]

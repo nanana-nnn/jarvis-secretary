@@ -123,63 +123,63 @@ iPhone 13 Pro を常設AI秘書端末にし、音声で Obsidian Vault と Codex
 
 ## 5. リポジトリ構成
 
+実物（2026-09-05 時点）。**構成を変えたらこの表も直す。**
+2026-09-05 まで、ここは 2026-08-26 の計画のまま実物と一致していなかった
+（`server/audio/` `server/security/` など、作られなかったものが載っていた）。
+
 ```text
 jarvis-secretary/
 ├── apps/
-│   └── iphone-ui/                  # PWA
-│       ├── src/
-│       │   ├── states/             # 有限状態機械
-│       │   │   ├── machine.ts
-│       │   │   └── types.ts
-│       │   ├── audio/
-│       │   │   ├── clap-worklet.ts     # AudioWorkletProcessor
-│       │   │   ├── clap-detector.ts    # 判定・クールダウン
-│       │   │   └── recorder.ts         # 16kHz PCM 化と送信
-│       │   ├── components/
-│       │   │   ├── Secretary.tsx       # 顔（右側）
-│       │   │   ├── Caption.tsx         # 字幕
-│       │   │   ├── Waveform.tsx        # 波形
-│       │   │   ├── Approval.tsx        # 承認／却下
-│       │   │   └── StatusBar.tsx
-│       │   ├── api/
-│       │   │   ├── socket.ts           # WS client・自動再接続
-│       │   │   └── http.ts
-│       │   ├── speech/tts.ts           # Web Speech API
-│       │   └── settings/               # しきい値等の端末内設定
-│       ├── public/
-│       │   ├── manifest.webmanifest
-│       │   └── assets/
-│       │       ├── secretary-sleep.webp
-│       │       └── secretary-awake.webp
-│       └── vite.config.ts
+│   └── iphone-ui/                      # PWA（Vite + React）
+│       └── src/
+│           ├── App.tsx                 # 画面の組み立てと待機/復帰のタイマー
+│           ├── theme.ts                # 届いた配色・壁紙をDOMへ反映（§15）
+│           ├── copy.ts                 # 状態ごとの表示文
+│           ├── model.ts                # 画面が持つ値の型
+│           ├── clap-settings.ts        # しきい値の端末内保存
+│           ├── hooks/
+│           │   ├── useSecretarySocket.ts   # WS接続とイベントの振り分け（§12）
+│           │   ├── useMicrophone.ts        # マイク・手拍子検出・画面ロック
+│           │   ├── useQaCard.ts            # 文字回答カードの状態
+│           │   └── useViewportReset.ts     # iOS standalone のズレ対策
+│           ├── clap-settings.ts        # しきい値の端末内保存
+│           ├── states/                 # 有限状態機械（§6）
+│           ├── audio/                  # AudioWorklet・手拍子判定・録音
+│           ├── api/socket.ts           # WSクライアント・自動再接続（socket.test.ts で接続交代を検証）
+│           └── components/             # Fetch / LavaCore / Live / AnswerCard 他
 ├── server/
-│   ├── app.py                      # FastAPI エントリ
-│   ├── config.py                   # .env 読み込みと検証
-│   ├── session.py                  # セッション・ジョブキュー
-│   ├── audio/
-│   │   ├── vad.py                  # webrtcvad による発話終端判定
-│   │   └── stt.py                  # faster-whisper ラッパー
-│   ├── router/
-│   │   ├── classify.py             # 5分類
-│   │   └── rules.py                # キーワード表
-│   ├── agents/
-│   │   ├── base.py                 # AgentRunner 抽象
-│   │   ├── codex.py                # Codex CLI アダプター
-│   │   └── claude.py               # 予約（未実装で可）
-│   ├── vault/
-│   │   ├── paths.py                # 実パス固定・パス検証
-│   │   ├── git.py                  # status / diff（commit しない）
-│   │   └── write.py                # 承認済み書き込み適用
-│   └── security/
-│       ├── pairing.py              # QR・ペアリングトークン
-│       └── tokens.py               # 端末トークン検証
-├── tests/
+│   ├── app.py                          # FastAPI の組み立て。配線だけ置く
+│   ├── session.py                      # 端末1台との会話（受信ループ・応答）
+│   ├── hub.py                          # 接続中の端末と、配り続けるイベント
+│   ├── approval.py                     # 承認待ちの提案・監査ログ・自動却下（§11）
+│   ├── agent.py                        # Codex CLI アダプター（§10）
+│   ├── router.py                       # 用件の5分類（§9）
+│   ├── transcribe.py                   # faster-whisper ラッパー（§8）
+│   ├── audio.py                        # VAD による発話終端判定（§8）
+│   ├── vault.py                        # Vault の読み取りと直答（§9）
+│   ├── write.py                        # 承認済み提案の適用（§11）
+│   ├── gitstate.py                     # Vault の git 状態（読むだけ）
+│   ├── facts.py                        # PC の実測値（テレメトリ・プロセス）
+│   ├── scheme.py                       # caelestia の配色（§15）
+│   ├── wallpapers.py                   # 壁紙の一覧・切り替え・変換
+│   ├── terminal.py                     # 作業を見せるターミナル
+│   ├── browser.py                      # 常駐ブラウザの操作（§18.1）
+│   ├── note_draft.py                   # noteのエディタ操作（§18.1）
+│   ├── note_writer.py                  # 声→下書きの取り回し。常駐ブラウザ1枚（§18.2）
+│   ├── thumbnail.py                    # 見出し画像を題から作る（§18.2）
+│   ├── clock.py                        # イベントに載せる時刻
+│   └── config.py                       # .env 読み込みと検証
+├── tests/                              # pytest（server 側。test_lifecycle_regressions.py は切断・承認・競合の回帰検証）
+├── docs/
+│   ├── phase-0-1-acceptance.md
+│   └── archive/                        # 実装の根拠にしない過去の検討
+├── examples/                           # 実際に通した入出力の控え
 ├── scripts/
-│   ├── gen-cert.sh                 # LAN 用自己署名証明書
-│   └── show-qr.py                  # ペアリングQR表示
+│   ├── gen-cert.sh                     # LAN 用自己署名証明書
+│   └── serve-local.sh                  # 外出先で 127.0.0.1 に建てる
 ├── .env.example
 ├── AGENTS.md
-├── CLAUDE.md
+├── DESIGN.md
 └── README.md
 ```
 
@@ -214,7 +214,7 @@ jarvis-secretary/
 | `WAKING` | 衝撃波アニメ完了（250ms） | `LISTENING` |
 | `WAKING` | 拍手の固定質問への応答が届く（`agent.started`） | `THINKING` |
 | `LISTENING` | サーバーが `audio.final` を返す | `TRANSCRIBING` |
-| `LISTENING` | 8秒無音（発話なし） | `SLEEP` |
+| `LISTENING` | 10秒無音（発話なし） | `SLEEP` |
 | `TRANSCRIBING` | `agent.started` | `THINKING` |
 | `THINKING` | `approval.required` | `APPROVAL` |
 | `THINKING` | `agent.completed` | `SPEAKING` |
@@ -234,7 +234,7 @@ jarvis-secretary/
 | 名前 | 値 | 用途 |
 |---|---|---|
 | `WAKE_ANIM_MS` | 250 | 手拍子2回の衝撃波 |
-| `LISTEN_IDLE_MS` | 20000 | 発話が来ないまま待機へ戻る（実装値。実機で8000は短すぎた） |
+| `LISTEN_IDLE_MS` | 10000 | 発話が来ないまま待機へ戻る。9/2 に 8000→20000 としたが、実際はタイマーが張られていなかった（`continueQa` で `speaking` を降ろしていなかった）。2026-09-05 に修正したうえで 10000 |
 | `POST_ANSWER_IDLE_MS` | 20000 | 文字回答カードを見せたまま待機へ戻る（読み上げ廃止・2026-09-02） |
 | `APPROVAL_TIMEOUT_MS` | 120000 | 無操作で自動却下 |
 | `ERROR_AUTO_BACK_MS` | 5000 | ERROR から SLEEP へ |
@@ -245,7 +245,12 @@ jarvis-secretary/
 
 ## 7. 手拍子検出
 
-**既定は手拍子2回。** 1回の指パッチンはタイピング音と実測指標が重なり誤起動したため、2026-09-02に取り下げた。
+**既定は指パッチン1回**（`single`、2026-09-05に本人の指定で戻した）。
+
+経緯：2026-08-26 は指パッチン1回 → 2026-09-02 にタイピング音の誤起動で手拍子2回へ →
+2026-09-05 に指パッチン1回へ戻した。**誤起動が出たら mode を変えず、`CLAP_RATIO` と
+`CLAP_HF_MIN` を上げて対処する**（起動方式は本人の指定が優先）。
+真値は `apps/iphone-ui/src/audio/types.ts` の `DEFAULT_CLAP_SETTINGS.mode`。
 
 ### 実装
 
@@ -254,8 +259,8 @@ jarvis-secretary/
 - 各フレームで **RMS** と **高周波成分**（4kHz 以上のエネルギー比）を計測
 - 周囲騒音の **移動平均**（時定数 3 秒）を持ち、固定音量ではなく相対しきい値で判定
 - 拍手候補の条件：`rms > noise_floor * CLAP_RATIO` かつ `hf_ratio > CLAP_HF_MIN` かつ 立ち上がりが 20ms 以内
-- `CLAP_MODE=double` で、1回目から `CLAP_GAP_MIN`〜`CLAP_GAP_MAX` の間に2回目があれば起動する
-- `single` はデバッグ用に残すが、常設端末の既定には使わない
+- `single` は候補が1つ出た時点で起動する（現在の既定）
+- `double` は1回目から `CLAP_GAP_MIN`〜`CLAP_GAP_MAX` の間に2回目があれば起動する。誤起動が増えたときの逃げ道として残す
 - 検出後 `CLAP_COOLDOWN_MS` は無反応
 
 ### パラメータ（設定画面で変更可能・端末内に保存）
@@ -267,7 +272,7 @@ jarvis-secretary/
 | `CLAP_GAP_MIN` | 250ms | 100–300 |
 | `CLAP_GAP_MAX` | 800ms | 500–1500 |
 | `CLAP_COOLDOWN_MS` | 2000 | 固定 |
-| `CLAP_MODE` | `double` | `double` / `single` |
+| `CLAP_MODE` | `single` | `single` / `double` |
 
 ### 調整
 
@@ -311,19 +316,28 @@ jarvis-secretary/
 
 ## 9. ルーター（用件判定）
 
-LLM を使わないルールベース。キーワードは `server/router/rules.py` に表として持つ。
+LLM を使わないルールベース。キーワードは `server/router.py` に表として持つ。
 
 | 分類 | 意味 | 判定の手がかり | 実行モード |
 |---|---|---|---|
+| `SYSTEM` | 端末操作 | 「音量」「再接続」「寝て」「終わり」「ありがとう」「やめて」 | サーバー内処理 |
+| `NOTE` | note の下書きを作る | 「note」「note記事」 | `note` |
+| `WALLPAPER` | PC の壁紙を選ぶ | 「壁紙」「背景」「かべがみ」 | サーバー内処理 |
 | `ASK` | Vault を読んで答える | 「何」「どこ」「教えて」「状態」「どうなってる」 | `read_only` |
-| `CAPTURE` | デイリーへ記録する | 「記録して」「残して」「メモして」 | `propose_write` |
+| `CAPTURE` | デイリーへ記録する | 「記録して」「残して」「メモして」「書いて」 | `propose_write` |
 | `DECIDE` | 判断・優先順位 | 「どっち」「優先」「決めて」「軍配」 | `read_only` |
 | `EXECUTE` | Codex で作業する | 「作って」「直して」「実装して」 | `propose_write` |
-| `SYSTEM` | 端末操作 | 「音量」「再接続」「寝て」「終わり」「ありがとう」 | サーバー内処理 |
 
 ### 規則
 
 - `SYSTEM` を最優先で判定する（エージェントを起動しない）
+- **`NOTE` と `WALLPAPER` は表より先に見る。** どちらも下の行の手がかりに
+  食われる（「note書いて」→ `CAPTURE` の「書いて」／「壁紙変えて」→ `EXECUTE` の
+  「変えて」）。先に捕まえないと、頼んでいない Vault の書き換え提案が出る
+- **ひらがな・カタカナの「ノート」を `NOTE` に入れない。** Obsidian のノートと
+  区別が付かず、「今日のデイリーノートに書いて」まで note の下書きになる
+- 聞き間違いは実機ログに出たものだけを手がかりへ足す。推測で足さない
+  （2026-09-05：「壁紙」が `壁が見` `風が見` と書き起こされ、5回中3回外していた）
 - どれにも当たらなければ **`ASK` を既定**とする
 - 分類結果を `agent.started` イベントに含め、字幕へ小さく表示する（誤分類に気づけるようにする）
 - 誤分類時のため「違う、記録して」のような言い直しで再分類できるようにする
@@ -518,12 +532,15 @@ LOG_PATH=./logs/operations.jsonl
 
 ## 15. JARVIS ビジュアル
 
+**ビジュアルの正本はこの §15 だけ。** 過去の検討（移植先を取り違えた引き継ぎ・秘書画像の改訂案）は `docs/archive/` にある。実装の根拠にしない。
+
 iPhone は縦置きを正とする。秘書画像ではなく、CachyOS の `sysmon` の `dots` パネル
-（実体は **lavat**。§15.2）をそのまま移植したものをJARVISの顔にする。
+（実体は **lavat**。§15.1）をそのまま移植したものをJARVISの顔にする。
 
 - 中央に 69×34 のメタボールパネルを置く。丸い一般的なAIオーブにはしない
 - **まず実物どおり「常に動いている」だけを再現する。状態や音への反応は後から決める**
 - 上部は小さな JARVIS / PC LINK、下部は状態文と最低限の操作だけにする
+- **表示文・ボタン・状態名はすべて英語**にし、短い状態名だけにする（実装は `apps/iphone-ui/src/copy.ts`）
 - Caelestia のターミナル表示を組み替えたJARVIS自己紹介は接続・起動時だけ表示する
 - Nerd Fontアイコンは小さな補助記号に限定し、iPhone Safariで字形を確認できないものは使わない
 - 白髪秘書素材はUIへ表示しない。再利用する場合は目の位置と瞬きの整合を別途確認する
@@ -533,70 +550,7 @@ iPhone は縦置きを正とする。秘書画像ではなく、CachyOS の `sys
 - 待機時は画面全体を240秒で数ピクセル移動させる
 - OLED 保護のため、真っ白な静止画を長時間・最大輝度で表示しない
 
-### 15.1 Claude Codeへの引き継ぎ（2026-08-30）
-
-> **2026-08-31 訂正。この節の移植先は誤り。正しくは §15.2。**
-> `sysmon-watch.sh` の `dots` 分岐は `command -v lavat` を先に見るため、
-> lavat が入っているこの環境では **lavat が描いており `sysmon-dots.py` は動いていない**。
-> 設定ファイルだけ読んで `ps` で動いているプロセスを確認しなかったのが原因。
-> 以下は音声反応を前提にしているが、実物は音に反応しない。画面構成と配色の項だけ有効。
-
-現在の `aecb6e9` の画面は完成形ではない。中央に丸いドットを置いただけで、参照元のLinux端末表示を再現できていない。次の実装では、見た目を推測で作り直さず、実際に動いている下記ファイルを正本として移植する。
-
-#### 参照元
-
-- ドットの描画本体：`~/.config/caelestia/sysmon-dots.py`
-- 配色追従と再起動：`~/.config/caelestia/sysmon-watch.sh`
-- 実際の5パネル配置：`~/.config/caelestia/hypr-user.lua` の `sysmon_layout`
-- 起動コマンド：`~/.config/caelestia/cli.json` の `toggles.sysmon`
-
-特に再現するのは、特殊ワークスペース `sysmon` で**時計の上に表示されている `dots` パネル**。この実物を先にスクリーンショットまたは画面で確認してから実装する。
-
-#### ドットの動き
-
-`sysmon-dots.py` のアルゴリズムをブラウザ側へ移植する。
-
-1. Web Audio API のFFTから20本の周波数帯を作る（元コードの `BARS = 20` に合わせる）
-2. 各セルを中心からの極座標へ変換する
-3. `abs(dx)` を使って左右対称にする
-4. 角度を20本のバー番号へ割り当てる
-5. 半径は元コードと同じ `0.30 + level * 0.72` を基準にする
-6. 上下も鏡像にし、音に合わせて輪郭が不規則に変わる「ブロックの塊」にする
-
-単一の `rms` で円を拡大縮小するだけの実装は禁止。一般的なAIオーブ、均一な円、中央の `J` バッジにも戻さない。
-
-#### 画面構成
-
-- 上部に端末のFIGlet風ASCIIアートで **JARVIS** と表示する
-- ユーザーが示したCaelestiaロゴと同じ斜体端末風の字形・密度を使う。ただし文字列は `JARVIS`
-- 中央の主役は上記の動くドットパネル
-- 表示文、ボタン、状態名は**すべて英語**
-- 日本語の大見出し、説明文、カード型のシステム情報一覧は置かない
-- 必要な情報は `STANDBY` / `LISTENING` / `THINKING` / `OFFLINE` のような短い状態名だけ
-- Linux端末らしいモノスペース、余白、罫線で構成する。一般的なモバイルアプリ風の角丸カードUIにはしない
-- Nerd Fontアイコンを使う場合は、iPhone Safariで実際に字形が出ることを確認する。確認できない字形はASCII記号へ置き換える
-
-#### 配色
-
-Caelestiaでテーマまたは壁紙を変更したら、iPhone側も再読み込みなしで追従する。
-
-- サーバーは `~/.local/state/caelestia/scheme.json` の `mode` とMaterial tokensをWebSocketで配信する
-- ブラウザは `scheme.changed` を受けてCSS変数を即時更新する
-- ドット、ASCIIロゴ、罫線も `primary` に追従する
-- 背景と文字色はlight/darkを含むscheme全体へ追従する
-- `scheme.json` が読めない場合だけライトテーマの安全な既定値へ戻す
-
-#### 合格条件
-
-- 実際の `sysmon` の `dots` パネルと並べて見て、同じ種類の動きだと分かる
-- マイク入力へ反応する輪郭が20帯域由来で、単純な円の拡大縮小ではない
-- 390×844pxでASCIIの `JARVIS`、動くドット、英語の状態、操作が1画面に収まる
-- 画面内に日本語がない
-- Caelestiaのテーマを切り替えると、背景・文字・ドット・罫線がその場で変わる
-- ライトテーマとダークテーマの両方をスクリーンショットで確認する
-- iPhone Safari実機で動きと字形を確認する
-
-### 15.2 dots パネルの正体は lavat（2026-08-31）
+### 15.1 dots パネルの正体は lavat（2026-08-31 確認）
 
 `sysmon` の `dots` パネルを描いているのは **lavat**（`lavat -g -c 615a7a -k 615a7a`）。
 `sysmon-watch.sh` は lavat があればそれを使い、無いときだけ `sysmon-dots.py` へ落ちる。
@@ -629,6 +583,51 @@ Caelestiaでテーマまたは壁紙を変更したら、iPhone側も再読み�
 - 塗り面積比が実物と同じ範囲に入る（実物 0.746 / 移植 0.688〜0.885・中央値 0.783）
 - 音を鳴らさなくても動き続ける（連続フレームがすべて相異なること）
 - 実機スクショと並べて、同じ種類の形・同じ階段の粗さに見える
+
+---
+
+### 15.2 画面に足したもの（2026-09-05）
+
+**1段目 `wake` 行** — 待機中に聞こえた音を1行で見せる（`Fetch.tsx` の `wakeRow`）。
+右端が最新。`_` 静か / `▄` しきい値は越えたが起動条件に合わなかった音 / `█` 起こした1回。
+高さの基準は `ABSOLUTE_MIN_RMS`（検出器と同じ関門）。生の RMS で描くと静かな部屋で
+棒が動かない。
+
+> **字は実測で選ぶこと。** `▁▂▃▅▆▇` `░▒▓` `▏▎▍▌` 点字はすべて同梱サブセットに無く、
+> 基準9px に対して 15.2px の別フォントへ落ちて**箱の右の罫線が壊れた**（実測）。
+> 入っているのは `▄` `█` と ASCII と罫線6字だけ。
+
+> **行を増やしたら高さを測り直すこと。** 13行になって 9px はみ出し、箱の下の罫線が
+> 切れた。行送りを 1.24 → 1.14、gap を 4 → 2 にして収めてある（390×844 実測）。
+
+**3段目 操作ボタン** — 起きているあいだだけ出す（`Live.tsx` の `LiveAction`）。
+待機へ戻ると消える。文字は添えず絵だけ（`aria-label` に名前を残す）。
+背景 / チャット / タスク / 待機の4つ。**押してやることは全部いまある経路に乗せる** ──
+背景とタスクは発話と同じ `text.input` を通すので、判定はサーバーのルーター1か所のまま。
+画面側に2つ目の判定を作らない。
+
+**チャット（打ち込み）** — 「チャット」を押すと1段目が文字回答カードになり、
+下に打ち込み欄が出る（`AnswerCard` の `onSend`）。声で頼めない場面用。
+打った文は `text.input` → ルーター → Codex と、声とまったく同じ道を通る。
+状態も `CONTINUE` → `AUDIO_FINAL` で声と同じ入口へ入れる（飛ばすと THINKING の
+見た目にならず経過も出ない）。入力欄は 16px（iOS は 16px 未満で自動拡大し桁が崩れる）。
+
+> **浮かせた窓は作らない。** 質問と回答が積み上がる文字回答カードが既にチャット。
+> 窓を浮かせると「どの段も同じ枠」という前提から外れ、iOS standalone の位置ズレ
+> （2026-09-02、101px）を踏み直す。
+
+> **見た目と状態を混ぜない。** ボタンの表示は `view`（`?state=` で差し替わる見た目）で
+> 決める。「待機で畳む」判定を `state`（本物）で書いたため、プレビューで押した直後に
+> 打ち消された（2026-09-05）。どちらか一方に揃えること。
+
+**アイコンを足すとき** — `public/fonts/README.md` の `$ICONS` を先に直して
+フォントを作り直す。**入っていない字は豆腐にならず、幅9pxの透明な空白として出る**ので
+画面を見ても気づけない（2026-09-05、候補14字すべてが描画量0だった）。
+コードポイントは記憶で書かず、元フォントで一覧に描いて選ぶ。
+
+---
+
+## 16. 常設運用
 
 - PWA をホーム画面へ追加（`manifest.webmanifest` / `display: standalone` / `orientation: portrait`）
 - 縦向きスタンド＋給電
@@ -838,6 +837,33 @@ Phase は順番に進める。**前の Phase の合格条件を満たすまで�
 
 固定文で1本通し、`https://editor.note.com/notes/<key>/edit/` まで到達。
 記事一覧に「下書き」ステータスで題・本文とも残ることを確認した。
+
+---
+
+## 18.2 声から note の下書きまで（2026-09-05）
+
+「JARVISのnote書いて」と言うと、**Codex が本文を書き、そのまま下書きまで入る。**
+Vault は変えない。公開には触れない。
+
+```
+発話 → router: NOTE (mode="note", long)
+     → agent.run(mode="note")            読み取り専用。NOTE_SCHEMA で題と本文を受け取る
+     → thumbnail.make(題)                見出し画像を文字と面だけで作る（1280×670）
+     → note_writer.write(題, 本文, 画像)  常駐ブラウザで下書き保存
+     → agent.completed（題と編集URLを画面へ）
+```
+
+決めてあること。
+
+- **本文は Codex が Vault を根拠に書く。** 出典が言えないことは書かせない（`NOTE_PROMPT`）
+- **題と本文が両方揃わなければ失敗にする。** 片方だけで進めると中途半端な記事が
+  note に残り、作り直さない規則があるので取り返せない
+- 見出し画像は**写真も生成AIも使わない**。文字と面だけで作る（出所を説明できる）。
+  作れなかったら画像なしで下書きへ進む。あとから `note_draft header` で足せる
+- **同時に2本走らせない。** 走っている間に頼まれたら `NOTE_BUSY` を返して待たせる
+- ブラウザは1枚を常駐で持つ（専用プロファイルは1プロセスしか掴めない）
+- 承認カードは出さない。§11 の承認は Vault への書き込みのための仕組みで、
+  note の下書きは Vault の外。**代わりに画面に出したまま操作するのが確認手段**（§18.1）
 
 ---
 

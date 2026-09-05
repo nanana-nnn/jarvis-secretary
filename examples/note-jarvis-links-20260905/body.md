@@ -1,0 +1,5 @@
+JARVISに繋がっているものを数えてみた。
+
+iPhoneが1台。手を2回叩くと起きる。PCはCachyOSで、文字起こしもCodexもこの中で動く。Obsidianのvaultが記録の正本で、未コミットが3件あることまで画面に出ている。
+
+点いているのは実測だけにした。obsidian・codex・claude・chrome・ターミナルの生死とCPUを5秒ごとに見て、数えられないものは画面に出さない。

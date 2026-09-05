@@ -86,7 +86,10 @@ def test_the_list_is_capped(library: Path, monkeypatch) -> None:
 def test_wallpaper_requests_never_reach_codex_or_the_vault() -> None:
     """「壁紙変えて」は EXECUTE の「変えて」に当たると、Codex に Vault を
     書き換えさせる話になってしまう。判定の手前で捕まえること（2026-09-05）。"""
-    for text in ("壁紙かえたい", "壁紙を変えて", "背景変えて", "かべがみ変えたい"):
+    for text in ("壁紙かえたい", "壁紙を変えて", "背景変えて", "かべがみ変えたい",
+                 "背景替えたい", "はいけい変えたい",
+                 # faster-whisper が実際に返した聞き間違い（2026-09-05 実機ログ）
+                 "壁が見替えたい", "風が見かえたい"):
         decision = route(text)
         assert decision.intent == "WALLPAPER", text
         assert decision.mode == "read_only", f"{text} が書き込みへ回っている"
