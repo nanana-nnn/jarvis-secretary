@@ -210,7 +210,7 @@ jarvis-secretary/
 |---|---|---|
 | `BOOTING` | WS 接続成功 | `SLEEP` |
 | `BOOTING` | 接続失敗 | `OFFLINE` |
-| `SLEEP` | 手拍子2回を検出 | `WAKING` |
+| `SLEEP` | 指パッチン1回を検出、または画面の操作部以外をタップ | `WAKING` |
 | `WAKING` | 衝撃波アニメ完了（250ms） | `LISTENING` |
 | `WAKING` | 拍手の固定質問への応答が届く（`agent.started`） | `THINKING` |
 | `LISTENING` | サーバーが `audio.final` を返す | `TRANSCRIBING` |

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { type ClapLog, type ClapSettings } from "./audio/types";
 import { AnswerCard } from "./components/AnswerCard";
 import { WallpaperPicker, type WallpaperChoice } from "./components/WallpaperPicker";
@@ -74,6 +74,13 @@ export default function App() {
   stateRef.current = state;
 
   const send = (event: SecretaryEvent) => setState(current => transition(current, event));
+
+  function wakeFromTap(event: MouseEvent<HTMLElement>) {
+    if (stateRef.current !== "SLEEP") return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, input, textarea, select, a, label")) return;
+    send("TAP_DETECTED");
+  }
 
   const socketRef = useSecretarySocket({
     send, setCaption, setSpeaking, setHeardNothingAt, setPapers, setApplyingPaper,
@@ -313,7 +320,7 @@ export default function App() {
 
   // sysmon の右列と同じ3段。上から fetch / dots / 状態（tty-clock の位置）。
   // 質問が始まったら1段目を文字回答カードへ差し替える（読み上げ廃止・2026-09-02）
-  return <main className={`shell state-${view.toLowerCase()}`}>
+  return <main className={`shell state-${view.toLowerCase()}`} onClick={wakeFromTap}>
     <Ambience state={view} />
     {/* 1段目は3通りに差し替わる。**枠の大きさはどれも同じ**（grid の
         minmax(0,1fr) の段をそのまま使う。中身だけが変わる）。

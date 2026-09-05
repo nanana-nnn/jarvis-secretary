@@ -2,7 +2,7 @@ import type { SecretaryEvent, SecretaryState } from "./types";
 
 const transitions: Partial<Record<SecretaryState, Partial<Record<SecretaryEvent, SecretaryState>>>> = {
   BOOTING: { CONNECTED: "SLEEP", CONNECT_FAILED: "OFFLINE", DISCONNECTED: "OFFLINE", SYSTEM_ERROR: "ERROR" },
-  SLEEP: { CLAP_DETECTED: "WAKING", DISCONNECTED: "OFFLINE", SYSTEM_ERROR: "ERROR" },
+  SLEEP: { CLAP_DETECTED: "WAKING", TAP_DETECTED: "WAKING", DISCONNECTED: "OFFLINE", SYSTEM_ERROR: "ERROR" },
   // IDLE は LISTENING/TRANSCRIBING/SPEAKING と同じ戻り道（下のコメント参照）。
   // 拍手の直後、WAKE_FINISHED が来る前に聞き取り失敗（STT_FAILED）が届くと
   // ここに居る。無いと AWAKENING のまま固まる（2026-09-03、実機で確認）

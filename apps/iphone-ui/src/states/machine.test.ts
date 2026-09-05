@@ -8,6 +8,11 @@ describe("secretary state machine", () => {
     expect(transition("SLEEP", "CLAP_DETECTED")).toBe("WAKING");
     expect(transition("WAKING", "WAKE_FINISHED")).toBe("LISTENING");
   });
+  it("待機中は画面タップでも拍手と同じ起動経路へ入る", () => {
+    expect(transition("SLEEP", "TAP_DETECTED")).toBe("WAKING");
+    expect(transition("WAKING", "WAKE_FINISHED")).toBe("LISTENING");
+    expect(transition("THINKING", "TAP_DETECTED")).toBe("THINKING");
+  });
   it("moves every state offline on disconnect", () => expect(transition("THINKING", "DISCONNECTED")).toBe("OFFLINE"));
 
   it("拍手直後、WAKE_FINISHED より先に聞き取り失敗が届いても AWAKENING で固まらない", () => {
@@ -27,7 +32,7 @@ describe("行き止まりがないこと", () => {
       "THINKING", "APPROVAL", "SPEAKING", "ERROR", "OFFLINE",
     ];
     const events: SecretaryEvent[] = [
-      "CONNECTED", "CONNECT_FAILED", "DISCONNECTED", "CLAP_DETECTED", "WAKE_FINISHED",
+      "CONNECTED", "CONNECT_FAILED", "DISCONNECTED", "CLAP_DETECTED", "TAP_DETECTED", "WAKE_FINISHED",
       "AUDIO_FINAL", "AGENT_STARTED", "APPROVAL_REQUIRED", "AGENT_COMPLETED",
       "IDLE", "FINISH", "SYSTEM_ERROR", "RETRY", "CONTINUE",
     ];
