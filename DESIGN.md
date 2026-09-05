@@ -795,6 +795,22 @@ Phase は順番に進める。**前の Phase の合格条件を満たすまで�
 待ち受け中に**こちらからページを動かさない**こと。定期的にトップへ遷移して
 ログイン済みかを確かめる作りにしたら、本人が入力している最中に画面が飛んだ。
 
+### ウィンドウの置き場所
+
+**Chrome の起動引数では決まらない。** Wayland では `--window-position` も
+`--window-size` も無視され、コンポジタが置き場所を決める。既定ではタイルの半分に
+収まり、note のエディタが右で切れる（2026-09-05、実機のスクショで確認）。
+
+開いたあとに Hyprland へ名指しで指示する（`server/browser.py` の `fit_window`）。
+このプロファイルで動いている PID のウィンドウだけを動かし、普段の Chrome には触らない。
+
+- Hyprland 0.56 は **Lua のディスパッチャ**。`hyprctl dispatch setfloating address:...`
+  は構文エラーになる。`hl.dsp.window.float({window="address:0x..."})` の形で送る
+- **float は切り替え。** すでに浮いている窓に送ると戻ってしまう
+- 大きさと位置は `hl.dsp.window.resize` / `move` に `exact=true` を付けて指定する
+- サンドボックスは切らない（`chromium_sandbox=True`）。切ると
+  「サポートされていないコマンドラインフラグ --no-sandbox」の黄色い帯が画面に映る
+
 ### 実測（2026-09-05）
 
 固定文で1本通し、`https://editor.note.com/notes/<key>/edit/` まで到達。
