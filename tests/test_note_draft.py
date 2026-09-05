@@ -75,9 +75,14 @@ class FakePage:
 class FakeBrowser:
     def __init__(self, page: FakePage) -> None:
         self._page = page
+        self.zoomed = 0
 
     async def page(self) -> FakePage:
         return self._page
+
+    async def fit_page(self, page) -> float:
+        self.zoomed += 1
+        return 1.0
 
 
 LOGGED_IN_EDITOR = {
@@ -130,7 +135,8 @@ async def test_本文の改行はEnterで段落にする() -> None:
     page = FakePage(LOGGED_IN_EDITOR)
     await note_draft.create_draft(FakeBrowser(page), "題", "一行目\n二行目")
 
-    assert page.typed == ["題", "一行目", "<Enter>", "二行目"], page.typed
+    # 末尾の <Escape> は、保存ボタンに重なる浮遊ツールバーをどけるためのもの
+    assert page.typed == ["題", "一行目", "<Enter>", "二行目", "<Escape>"], page.typed
 
 
 @_sync
@@ -160,3 +166,13 @@ async def test_ログイン待ちのあいだ画面を動かさない() -> None:
 
     assert ok is True
     assert page.visited == [note_draft.LOGIN], page.visited
+
+
+@_sync
+async def test_編集画面を開いたら中身の縮尺を掛け直す() -> None:
+    """窓を小さくしただけでは note のエディタが右で切れる。
+    遷移のたびに掛け直す（2026-09-05、4分割でも読めるようにするため）。"""
+    page = FakePage(LOGGED_IN_EDITOR)
+    browser = FakeBrowser(page)
+    await note_draft.create_draft(browser, "題", "本文")
+    assert browser.zoomed == 1

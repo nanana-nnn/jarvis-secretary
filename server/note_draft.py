@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 import sys
 
-from .browser import PROFILE_DIR, VisibleBrowser
+from .browser import LAYOUTS, PROFILE_DIR, VisibleBrowser
 
 # 素の Chrome を開くときの実体。VisibleBrowser は channel="chrome" で同じものを使う
 CHROME_BINARY = os.getenv("BROWSER_BINARY", "google-chrome-stable")
@@ -117,6 +117,16 @@ DRAFT_BUTTON_SELECTORS = (
 )
 EDITOR_WAIT_MS = 20000
 
+# 打鍵の速さ（1文字あたりms）。**人が書く速度に寄せる**（2026-09-05）。
+# note の規約に自動操作を禁じる条項は無いが、2026-02-27 のお知らせで
+# 「機械的に大量の記事を投稿する行為」への対応強化が明文化されている。
+# 機械的な速さを出さないことと、1件ずつにとどめることでそこから離れる
+# （調査は Vault の `04_resources/2026-09-05 noteのAI利用と自動操作の規約確認`）。
+# 画面に映すのが目的でもあるので、速すぎると「書いている様子」にも見えない
+TYPE_DELAY_MS = int(os.getenv("NOTE_TYPE_DELAY_MS", "55"))
+# 段落のあいだの間。人が改行して次を書きはじめるまでの呼吸
+PARAGRAPH_PAUSE_MS = 400
+
 
 async def _first_visible(page, selectors: tuple[str, ...], timeout_ms: int):
     """候補のうち最初に現れたものを返す。どれも来なければ None。"""
@@ -142,13 +152,15 @@ async def create_draft(browser: VisibleBrowser, title: str, body: str) -> dict:
                 "message": "note にログインしていません（`python -m server.note_draft login`）"}
 
     await page.goto(NEW_TEXT, wait_until="domcontentloaded")
+    # 窓が狭いとエディタが右で切れる。遷移のたびに中身の縮尺を掛け直す
+    await browser.fit_page(page)
     found = await _first_visible(page, TITLE_SELECTORS, EDITOR_WAIT_MS)
     if found is None:
         return {"ok": False, "error": "no_title_field", "url": page.url,
                 "message": "エディタの題名欄が見つかりません（note の画面が変わった可能性）"}
     title_field, _ = found
     await title_field.click()
-    await page.keyboard.type(title, delay=20)
+    await page.keyboard.type(title, delay=TYPE_DELAY_MS)
 
     found = await _first_visible(page, BODY_SELECTORS, 5000)
     if found is None:
@@ -160,9 +172,15 @@ async def create_draft(browser: VisibleBrowser, title: str, body: str) -> dict:
     for index, line in enumerate(body.split("\n")):
         if index:
             await page.keyboard.press("Enter")
+            await page.wait_for_timeout(PARAGRAPH_PAUSE_MS)
         if line:
-            await page.keyboard.type(line, delay=10)
+            await page.keyboard.type(line, delay=TYPE_DELAY_MS)
 
+    # **浮遊ツールバーをどける。** 本文を打った直後は note の書式ツールバーが
+    # 出ていて、狭い窓では「下書き保存」に重なりクリックを横取りする
+    # （2026-09-05、4分割で実際に落ちた）。選択を外してから押す
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(400)
     found = await _first_visible(page, DRAFT_BUTTON_SELECTORS, 5000)
     if found is None:
         return {"ok": False, "error": "no_draft_button", "url": page.url,
@@ -218,14 +236,19 @@ async def main(argv: list[str]) -> int:
     draft.add_argument("--body-file", required=True)
     # 見えることが要件なので、CLI から試すときは保存後もしばらく開けておく
     draft.add_argument("--keep-open", type=int, default=60, help="保存後に開けておく秒数")
+    # 置き場所（2026-09-05、本人の希望：分割なし／2分割／4分割を臨機応変に）
+    draft.add_argument("--layout", default=None, choices=sorted(LAYOUTS),
+                       help="窓の置き場所。既定は full")
     args = parser.parse_args(argv)
 
-    browser = VisibleBrowser()
+    browser = VisibleBrowser(layout=getattr(args, "layout", None))
     try:
         if args.command == "login":
             if args.by_hand:
                 return 0 if await login_by_hand() else 1
             return 0 if await wait_for_login(browser, args.wait) else 1
+        if args.layout:
+            await browser.set_layout(args.layout)
         body = Path(args.body_file).read_text(encoding="utf-8")
         result = await create_draft(browser, args.title, body)
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)

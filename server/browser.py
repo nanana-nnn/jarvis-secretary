@@ -47,6 +47,31 @@ LAUNCH_ARGS: tuple[str, ...] = ()
 # 画面の縁からの余白（論理px）。ぴったりにすると縁が画面外へ出る
 WINDOW_MARGIN = 24
 
+# 置き場所。画面に対する割合 (x, y, 幅, 高さ) で持つ。
+# 分割なし・縦2分割・横2分割・4分割を、呼ぶときに選べるようにする（2026-09-05、本人の希望）
+LAYOUTS: dict[str, tuple[float, float, float, float]] = {
+    "full":         (0.0, 0.0, 1.0, 1.0),
+    "left":         (0.0, 0.0, 0.5, 1.0),      # 縦2分割（左）
+    "right":        (0.5, 0.0, 0.5, 1.0),      # 縦2分割（右）
+    "top":          (0.0, 0.0, 1.0, 0.5),      # 横2分割（上）
+    "bottom":       (0.0, 0.5, 1.0, 0.5),      # 横2分割（下）
+    "top-left":     (0.0, 0.0, 0.5, 0.5),      # 4分割
+    "top-right":    (0.5, 0.0, 0.5, 0.5),
+    "bottom-left":  (0.0, 0.5, 0.5, 0.5),
+    "bottom-right": (0.5, 0.5, 0.5, 0.5),
+}
+DEFAULT_LAYOUT = os.getenv("BROWSER_LAYOUT", "full")
+
+# note のエディタが切れずに収まる横幅（CSS px）。窓がこれより狭いときは
+# ページ側を縮めて収める。**窓を小さくしただけでは中身が切れる**
+# （2026-09-05、タイル半分＝748px で見出しが右にはみ出した）。
+# **ビューポートを窓に合わせた（no_viewport）ので、通常は縮小が要らない。**
+# 以前は「窓を小さくすると切れる」を縮尺で埋めようとしていたが、真因は
+# Playwright の既定ビューポート 1280px だった（2026-09-05）。
+# ここは、窓が note のエディタの最低幅を割るほど小さいときの保険として残す
+TARGET_CSS_WIDTH = 700
+MIN_ZOOM = 0.4
+
 
 def screen_size() -> tuple[int, int] | None:
     """今のモニタの**論理**解像度。取れなければ None（既定の大きさに任せる）。
@@ -66,6 +91,20 @@ def screen_size() -> tuple[int, int] | None:
             scale = float(monitor.get("scale") or 1) or 1
             return int(monitor["width"] / scale), int(monitor["height"] / scale)
     return None
+
+
+def geometry(layout: str, screen: tuple[int, int]) -> tuple[int, int, int, int]:
+    """レイアウト名から (x, y, 幅, 高さ) を作る。知らない名前は full 扱い。"""
+    fx, fy, fw, fh = LAYOUTS.get(layout, LAYOUTS["full"])
+    width, height = screen
+    x = int(width * fx) + WINDOW_MARGIN
+    y = int(height * fy) + WINDOW_MARGIN
+    return x, y, int(width * fw) - WINDOW_MARGIN * 2, int(height * fh) - WINDOW_MARGIN * 2
+
+
+def page_zoom(window_width: int) -> float:
+    """窓の幅に対して、note のエディタが収まる縮尺。1.0 なら等倍のまま。"""
+    return max(MIN_ZOOM, min(1.0, round(window_width / TARGET_CSS_WIDTH, 2)))
 
 
 def _chrome_pids(profile: Path) -> set[int]:
@@ -91,7 +130,7 @@ def _dispatch(expression: str) -> None:
                        capture_output=True, timeout=3, check=False)
 
 
-def fit_window(profile: Path) -> bool:
+def fit_window(profile: Path, layout: str = "full") -> bool:
     """開いたウィンドウを画面いっぱい（余白つき）に置く。
 
     **Chrome の起動引数ではできない。** Wayland では `--window-position` も
@@ -118,8 +157,7 @@ def fit_window(profile: Path) -> bool:
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
-    width, height = size
-    target_w, target_h = width - WINDOW_MARGIN * 2, height - WINDOW_MARGIN * 2
+    x, y, target_w, target_h = geometry(layout, size)
     moved = False
     for client in clients:
         if client.get("pid") not in pids:
@@ -128,7 +166,7 @@ def fit_window(profile: Path) -> bool:
         if not client.get("floating"):
             _dispatch(f"hl.dsp.window.float({window}}})")
         _dispatch(f"hl.dsp.window.resize({window}, x={target_w}, y={target_h}, exact=true}})")
-        _dispatch(f"hl.dsp.window.move({window}, x={WINDOW_MARGIN}, y={WINDOW_MARGIN}, exact=true}})")
+        _dispatch(f"hl.dsp.window.move({window}, x={x}, y={y}, exact=true}})")
         moved = True
     return moved
 
@@ -140,9 +178,11 @@ class VisibleBrowser:
     **閉じるのは close() を呼んだときだけ。** ジョブが終わっても閉じない。
     """
 
-    def __init__(self, profile_dir: Path | None = None, channel: str | None = None) -> None:
+    def __init__(self, profile_dir: Path | None = None, channel: str | None = None,
+                 layout: str | None = None) -> None:
         self.profile_dir = profile_dir or PROFILE_DIR
         self.channel = channel or CHANNEL
+        self.layout = layout or DEFAULT_LAYOUT
         self._playwright = None
         self._context = None
         self._lock = asyncio.Lock()
@@ -168,7 +208,12 @@ class VisibleBrowser:
                 # フラグ --no-sandbox を使用しています」の黄色い帯が出る。
                 # 画面に映るのが目的なので、帯を出さない側にする
                 chromium_sandbox=True,
-                viewport=None,                  # ウィンドウの実寸に従わせる
+                # **`viewport=None` では外れない。** Playwright は既定で 1280x720 の
+                # ビューポートを当てるので、窓を小さくしても中身は 1280 幅のまま描かれ、
+                # はみ出した右側がコンポジタに切られる（2026-09-05、実測で
+                # 窓 752px に対して window.innerWidth が 1280 のままだった）。
+                # 窓の実寸に従わせるにはこちら
+                no_viewport=True,
                 locale="ja-JP",
             )
             # ブラウザ側から閉じられたら、次の依頼で開き直せるように忘れる
@@ -176,7 +221,7 @@ class VisibleBrowser:
             logger.info("[BROWSER] opened (profile=%s)", self.profile_dir)
             # ウィンドウが出てから位置と大きさを直す（起動引数では効かない）
             await asyncio.sleep(1.2)
-            if fit_window(self.profile_dir):
+            if fit_window(self.profile_dir, self.layout):
                 logger.info("[BROWSER] window fitted to screen")
             return self._context
 
@@ -189,6 +234,46 @@ class VisibleBrowser:
         context = await self.context()
         pages = [page for page in context.pages if not page.is_closed()]
         return pages[0] if pages else await context.new_page()
+
+    async def set_layout(self, layout: str) -> None:
+        """置き場所を変える。開いていなければ次に開くときから効く。"""
+        self.layout = layout
+        if self.alive():
+            fit_window(self.profile_dir, layout)
+
+    def window_size(self) -> tuple[int, int]:
+        """今の窓の (幅, 高さ)。取れなければレイアウトからの計算値。"""
+        screen = screen_size() or (TARGET_CSS_WIDTH, 800)
+        pids = _chrome_pids(self.profile_dir)
+        with suppress(OSError, ValueError, subprocess.SubprocessError):
+            clients = json.loads(
+                subprocess.run(["hyprctl", "clients", "-j"],
+                               capture_output=True, text=True, timeout=3, check=True).stdout
+            )
+            for client in clients:
+                if client.get("pid") in pids:
+                    return int(client["size"][0]), int(client["size"][1])
+        _, _, width, height = geometry(self.layout, screen)
+        return width, height
+
+    async def fit_page(self, page) -> float:
+        """**中身を窓に収める。** 窓を小さくしただけでは note のエディタが切れる。
+
+        CSS の `zoom` を掛ける。窓の幅と必要幅の比で決め打つ。
+        **試して外した方法が2つある。**
+
+        - ページに測らせる … note のエディタは横スクロールを出さずCSSで切るので、
+          `scrollWidth` を見てもはみ出しとして現れない（縮尺が常に1になる）
+        - CDP の `Emulation.setDeviceMetricsOverride`（見かけの幅を固定して縮小表示）
+          … 見た目は最も素直に収まるが、**クリックの座標がずれて操作が落ちる。**
+          見せるためにブラウザを縮めて、肝心の操作ができなくなっては本末転倒
+
+        遷移すると外れるので、ページを開くたびに掛け直す。
+        """
+        zoom = page_zoom(self.window_size()[0])
+        with suppress(Exception):
+            await page.evaluate("z => { document.documentElement.style.zoom = z }", zoom)
+        return zoom
 
     async def close(self) -> None:
         with suppress(Exception):

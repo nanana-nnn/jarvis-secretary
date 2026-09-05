@@ -61,3 +61,21 @@ def test_Hyprland以外では何もしない(monkeypatch) -> None:
     monkeypatch.setattr(browser, "screen_size", lambda: None)
     monkeypatch.setattr(browser, "_chrome_pids", lambda profile: {42})
     assert browser.fit_window(browser.PROFILE_DIR) is False
+
+
+def test_レイアウトは画面の割合から座標を出す() -> None:
+    """4分割の右下は、画面の右下1/4に余白ぶん内側で入る。"""
+    assert browser.geometry("full", (1600, 1000)) == (24, 24, 1552, 952)
+    assert browser.geometry("left", (1600, 1000)) == (24, 24, 752, 952)
+    assert browser.geometry("bottom-right", (1600, 1000)) == (824, 524, 752, 452)
+    # 知らない名前で落とさない（音声から来るので、綴りが揺れても動くこと）
+    assert browser.geometry("しらない", (1600, 1000)) == browser.geometry("full", (1600, 1000))
+
+
+def test_通常は縮めない_極端に狭いときだけ縮める() -> None:
+    """ビューポートを窓に合わせたので、4分割でも等倍で収まる（2026-09-05）。
+    縮尺は「note のエディタの最低幅を割るほど狭いとき」の保険として残す。"""
+    assert browser.page_zoom(1552) == 1.0          # 分割なし
+    assert browser.page_zoom(752) == 1.0           # 4分割・縦2分割でも等倍
+    assert browser.page_zoom(420) == 0.6           # それより狭ければ縮める
+    assert browser.page_zoom(200) == browser.MIN_ZOOM   # 縮めすぎない下限
