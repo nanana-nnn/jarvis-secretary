@@ -334,7 +334,12 @@ class Session:
             "elapsed": took // 1000, "ts": timestamp_ms(),
         })
         logger.info("[NOTE] writing draft: %r (%d字)", outcome.title[:40], len(outcome.body))
-        result = await note_writer.write(outcome.title, outcome.body)
+        # サムネは本人が発話で明示したときだけ作る。記事だけ頼まれた場合は
+        # 本文の下書き保存までに留める。
+        with_thumbnail = "サムネ" in text
+        result = await note_writer.write(
+            outcome.title, outcome.body, with_thumbnail=with_thumbnail,
+        )
         if not result.get("ok"):
             await self.emit({
                 "type": "system.error", "code": str(result.get("error", "note_failed")).upper(),

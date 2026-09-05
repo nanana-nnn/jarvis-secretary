@@ -121,11 +121,30 @@ async def test_下書きまで運んで編集URLを返す(tmp_path, monkeypatch)
     session, socket = _session(Agent(), tmp_path)
     await session._write_note("noteに書いて", NOTE)
 
-    assert written == {"title": "題", "body": "本文", "thumb": True}
+    assert written == {"title": "題", "body": "本文", "thumb": False}
     done = [e for e in socket.sent if e["type"] == "agent.completed"]
     assert len(done) == 1
     assert "nX" in done[0]["summary"]
     assert not [e for e in socket.sent if e["type"] == "approval.required"]
+
+
+@_sync
+async def test_サムネも頼んだときだけ生成して渡す(tmp_path, monkeypatch):
+    class Agent:
+        async def run(self, text, mode, timeout=None, use_session=False):
+            return AgentResult(summary="題", spoken_reply="できたよ", title="題", body="本文")
+
+    written = {}
+
+    async def fake_write(title, body, with_thumbnail=True):
+        written.update(title=title, body=body, thumb=with_thumbnail)
+        return {"ok": True, "url": "https://editor.note.com/notes/nX/edit/"}
+
+    monkeypatch.setattr(note_writer, "write", fake_write)
+    session, _ = _session(Agent(), tmp_path)
+    await session._write_note("JARVISのnoteの記事を書いて。サムネも作って", NOTE)
+
+    assert written == {"title": "題", "body": "本文", "thumb": True}
 
 
 @_sync
