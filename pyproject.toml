@@ -17,6 +17,9 @@ dependencies = [
     # 外れており、setuptools 81 以降も削除予定。入っていないと import で落ちるので
     # ここで明示的に留める。VAD を別実装へ替えるときに一緒に外すこと。
     "setuptools<81",
+    # ブラウザ操作（2026-09-05）。実体は既に入っている Google Chrome を使うので、
+    # Playwright 同梱の Chromium は落とさない（server/browser.py の channel="chrome"）
+    "playwright>=1.48,<2",
 ]
 
 [project.optional-dependencies]
