@@ -10,6 +10,9 @@ DOM が今日どう書かれているかではない（それは実機で1本通
 """
 import asyncio
 from functools import wraps
+from unittest.mock import AsyncMock
+
+import pytest
 
 from server import note_draft
 
@@ -46,6 +49,7 @@ class FakeKeyboard:
 
     async def type(self, text: str, delay: int = 0) -> None:
         self.page.typed.append(text)
+        self.page.delays.append(delay)
 
     async def press(self, key: str) -> None:
         self.page.typed.append(f"<{key}>")
@@ -58,6 +62,7 @@ class FakePage:
         self.present, self.url = present, url
         self.clicked: list[str] = []
         self.typed: list[str] = []
+        self.delays: list[int] = []
         self.visited: list[str] = []
         self.keyboard = FakeKeyboard(self)
 
@@ -176,3 +181,160 @@ async def test_編集画面を開いたら中身の縮尺を掛け直す() -> No
     browser = FakeBrowser(page)
     await note_draft.create_draft(browser, "題", "本文")
     assert browser.zoomed == 1
+
+
+class FakeChooser:
+    def __init__(self, page):
+        self.page = page
+
+    async def set_files(self, path):
+        self.page.uploaded.append(path)
+
+
+class FakeChooserEvent:
+    def __init__(self, page):
+        self.page = page
+
+    async def __aenter__(self):
+        self.page.choosing = True
+        return self
+
+    async def __aexit__(self, *args):
+        self.page.choosing = False
+
+    @property
+    def value(self):
+        async def result():
+            return FakeChooser(self.page)
+        return result()
+
+
+class HeaderPage(FakePage):
+    def __init__(self, present):
+        super().__init__(present)
+        self.uploaded = []
+        self.choosing = False
+
+    def expect_file_chooser(self, timeout):
+        return FakeChooserEvent(self)
+
+    def locator(self, selector):
+        locator = super().locator(selector)
+        original = locator.click
+
+        async def click():
+            if selector in note_draft.HEADER_UPLOAD_SELECTORS:
+                assert self.choosing, "ファイル選択の待ち受けを先に登録する"
+            if selector in note_draft.HEADER_APPLY_SELECTORS:
+                assert len(self.uploaded) == 1
+            if selector in note_draft.DRAFT_BUTTON_SELECTORS:
+                assert any(s in self.clicked for s in note_draft.HEADER_APPLY_SELECTORS)
+            await original()
+        locator.click = click
+        return locator
+
+
+HEADER_EDITOR = LOGGED_IN_EDITOR | {
+    note_draft.HEADER_BUTTON_SELECTORS[0],
+    note_draft.HEADER_UPLOAD_SELECTORS[0],
+    note_draft.HEADER_APPLY_SELECTORS[0],
+    note_draft.HEADER_PREVIEW_SELECTORS[0],
+}
+
+
+@pytest.fixture
+def header_image(tmp_path):
+    import base64
+    path = tmp_path / "header.png"
+    path.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII="))
+    return path
+
+
+@_sync
+async def test_見出し画像を一度アップロードして適用後に下書き保存(header_image):
+    page = HeaderPage(HEADER_EDITOR | {'button:text-is("公開に進む")'})
+    result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
+    assert result["ok"] is True
+    assert page.uploaded == [str(header_image)]
+    assert page.visited == [note_draft.NEW_TEXT]
+    assert page.clicked[-1] == note_draft.DRAFT_BUTTON_SELECTORS[0]
+    assert not any("公開" in s for s in page.clicked)
+    assert page.delays == [note_draft.TYPE_DELAY_MS] * 2
+
+
+@_sync
+async def test_画像の各段階も候補の2つ目で通る(header_image):
+    page = HeaderPage(LOGGED_IN_EDITOR | {
+        note_draft.HEADER_BUTTON_SELECTORS[1],
+        note_draft.HEADER_UPLOAD_SELECTORS[1],
+        note_draft.HEADER_APPLY_SELECTORS[1],
+        note_draft.HEADER_PREVIEW_SELECTORS[1],
+    })
+    result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
+    assert result["ok"] is True
+
+
+@pytest.mark.parametrize("selectors,error", [
+    (note_draft.HEADER_BUTTON_SELECTORS, "no_header_button"),
+    (note_draft.HEADER_UPLOAD_SELECTORS, "no_header_upload"),
+    (note_draft.HEADER_APPLY_SELECTORS, "no_header_apply"),
+    (note_draft.HEADER_PREVIEW_SELECTORS, "no_header_preview"),
+])
+@_sync
+async def test_画像UIが欠けたら成功扱いせず新規作成もし直さない(header_image, selectors, error):
+    page = HeaderPage(HEADER_EDITOR - set(selectors))
+    result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
+    assert result["ok"] is False
+    assert result["error"] == error
+    assert result["url"] == page.url
+    assert page.visited == [note_draft.NEW_TEXT]
+    assert not any(s in page.clicked for s in note_draft.DRAFT_BUTTON_SELECTORS)
+
+
+@_sync
+async def test_画像ファイル不正ならブラウザを開かない(tmp_path):
+    browser = FakeBrowser(FakePage(set()))
+    browser.page = AsyncMock(side_effect=AssertionError("ブラウザを開いた"))
+    for path in (tmp_path / "missing.png", tmp_path):
+        result = await note_draft.create_draft(browser, "題", "本文", path)
+        assert result["error"] == "invalid_header_image"
+    browser.page.assert_not_awaited()
+
+
+@_sync
+async def test_画像アップロード例外を結果にし保存を押さない(header_image, monkeypatch):
+    monkeypatch.setattr(FakeChooser, "set_files", AsyncMock(side_effect=TimeoutError))
+    page = HeaderPage(HEADER_EDITOR)
+    result = await note_draft.create_draft(FakeBrowser(page), "題", "本文", header_image)
+    assert result["error"] == "header_upload_failed"
+    assert not any(s in page.clicked for s in note_draft.DRAFT_BUTTON_SELECTORS)
+
+
+@_sync
+async def test_CLIが画像と本文とレイアウトを渡す(header_image, tmp_path, monkeypatch):
+    body = tmp_path / "body.md"
+    body.write_text("本文", encoding="utf-8")
+    browser = FakeBrowser(FakePage(set()))
+    browser.set_layout = AsyncMock()
+    browser.close = AsyncMock()
+    factory = lambda **kwargs: browser
+    monkeypatch.setattr(note_draft, "VisibleBrowser", factory)
+    create = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(note_draft, "create_draft", create)
+    result = await note_draft.main([
+        "draft", "--title", "題", "--body-file", str(body),
+        "--header-image", str(header_image), "--layout", "right", "--keep-open", "0",
+    ])
+    assert result == 0
+    create.assert_awaited_once_with(browser, "題", "本文", header_image=str(header_image))
+    browser.set_layout.assert_awaited_once_with("right")
+
+
+def test_打鍵速度の既定値は55ms(monkeypatch):
+    import importlib
+    with monkeypatch.context() as env:
+        env.delenv("NOTE_TYPE_DELAY_MS", raising=False)
+        importlib.reload(note_draft)
+        assert note_draft.TYPE_DELAY_MS == 55
+    importlib.reload(note_draft)

@@ -111,11 +111,68 @@ BODY_SELECTORS = (
 )
 # **「公開」は押さない。** 押していいのは下書き保存だけ（2026-09-05、本人の指定）
 DRAFT_BUTTON_SELECTORS = (
-    'button:has-text("下書き保存")',
-    'button:has-text("保存")',
+    'button:text-is("下書き保存")',
+    'button:text-is("保存")',
     '[data-testid="save-draft"]',
 )
 EDITOR_WAIT_MS = 20000
+
+# 見出し画像専用の導線。本文の画像ボタンや公開画面には進まない。
+HEADER_BUTTON_SELECTORS = (
+    'button[aria-label="見出し画像を追加"]',
+    'button:has-text("見出し画像を追加")',
+    '[data-testid="add-header-image"]',
+)
+HEADER_UPLOAD_SELECTORS = (
+    'button:has-text("画像をアップロード")',
+    '[role="menuitem"]:has-text("画像をアップロード")',
+    'label:has-text("画像をアップロード")',
+)
+HEADER_APPLY_SELECTORS = (
+    '[role="dialog"] button:text-is("保存")',
+    '[role="dialog"] button:text-is("適用")',
+    '[role="dialog"] button:text-is("決定")',
+)
+HEADER_PREVIEW_SELECTORS = (
+    '[data-testid="header-image"] img',
+    'img[alt="見出し画像"]',
+)
+
+
+async def set_header_image(page, image_path: Path) -> dict:
+    """ローカル画像を見出し画像UIから設定する。APIは使わない。
+
+    DOM候補は実機での確認が必要。途中で外れたら同じ編集URLを返し、
+    自動で新規記事を作り直さない。
+    """
+    stage = "header_button"
+    try:
+        found = await _first_visible(page, HEADER_BUTTON_SELECTORS, 3000)
+        if found is None:
+            return {"ok": False, "error": "no_header_button", "url": page.url}
+        await found[0].click()
+        stage = "header_upload"
+        found = await _first_visible(page, HEADER_UPLOAD_SELECTORS, 3000)
+        if found is None:
+            return {"ok": False, "error": "no_header_upload", "url": page.url}
+        async with page.expect_file_chooser(timeout=10000) as chooser_info:
+            await found[0].click()
+        chooser = await chooser_info.value
+        await chooser.set_files(str(image_path))
+        stage = "header_apply"
+        found = await _first_visible(page, HEADER_APPLY_SELECTORS, 5000)
+        if found is None:
+            return {"ok": False, "error": "no_header_apply", "url": page.url}
+        await found[0].click()
+        await found[0].wait_for(state="hidden", timeout=20000)
+        stage = "header_preview"
+        found = await _first_visible(page, HEADER_PREVIEW_SELECTORS, 5000)
+        if found is None:
+            return {"ok": False, "error": "no_header_preview", "url": page.url}
+        return {"ok": True}
+    except Exception:
+        logger.exception("[NOTE] failed at %s", stage)
+        return {"ok": False, "error": f"{stage}_failed", "url": page.url}
 
 # 打鍵の速さ（1文字あたりms）。**人が書く速度に寄せる**（2026-09-05）。
 # note の規約に自動操作を禁じる条項は無いが、2026-02-27 のお知らせで
@@ -141,11 +198,23 @@ async def _first_visible(page, selectors: tuple[str, ...], timeout_ms: int):
     return None
 
 
-async def create_draft(browser: VisibleBrowser, title: str, body: str) -> dict:
+async def create_draft(browser: VisibleBrowser, title: str, body: str,
+                       header_image: str | Path | None = None) -> dict:
     """題と本文を入れて下書き保存する。返すのは結果の要約。
 
     **公開しない。** 押すのは下書き保存だけで、公開ボタンには触れない。
     """
+    image_path = Path(header_image).expanduser().resolve() if header_image is not None else None
+    if image_path is not None:
+        if not image_path.is_file() or image_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+            return {"ok": False, "error": "invalid_header_image",
+                    "message": "見出し画像には既存のPNG/JPEG/WebPファイルを指定してください"}
+        try:
+            with image_path.open("rb") as image_file:
+                if not image_file.read(1):
+                    return {"ok": False, "error": "invalid_header_image"}
+        except OSError:
+            return {"ok": False, "error": "invalid_header_image"}
     page = await browser.page()
     if not await logged_in(page):
         return {"ok": False, "error": "not_logged_in",
@@ -181,6 +250,11 @@ async def create_draft(browser: VisibleBrowser, title: str, body: str) -> dict:
     # （2026-09-05、4分割で実際に落ちた）。選択を外してから押す
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(400)
+    if image_path is not None:
+        image_result = await set_header_image(page, image_path)
+        if not image_result["ok"]:
+            return {**image_result, "title": title,
+                    "message": "見出し画像の設定を確認できません。同じ編集URLで確認してください。新規作成の再実行はしないでください"}
     found = await _first_visible(page, DRAFT_BUTTON_SELECTORS, 5000)
     if found is None:
         return {"ok": False, "error": "no_draft_button", "url": page.url,
@@ -234,6 +308,7 @@ async def main(argv: list[str]) -> int:
     draft = sub.add_parser("draft")
     draft.add_argument("--title", required=True)
     draft.add_argument("--body-file", required=True)
+    draft.add_argument("--header-image", help="見出し画像としてアップロードするPNG/JPEG/WebP")
     # 見えることが要件なので、CLI から試すときは保存後もしばらく開けておく
     draft.add_argument("--keep-open", type=int, default=60, help="保存後に開けておく秒数")
     # 置き場所（2026-09-05、本人の希望：分割なし／2分割／4分割を臨機応変に）
@@ -250,7 +325,7 @@ async def main(argv: list[str]) -> int:
         if args.layout:
             await browser.set_layout(args.layout)
         body = Path(args.body_file).read_text(encoding="utf-8")
-        result = await create_draft(browser, args.title, body)
+        result = await create_draft(browser, args.title, body, header_image=args.header_image)
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
         await asyncio.sleep(args.keep_open)
         return 0 if result.get("ok") else 1
