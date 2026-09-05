@@ -224,6 +224,8 @@ jarvis-secretary/
 | `SPEAKING` | カード表示から20秒（「戻る」「続けて聞く」が無ければ） | `SLEEP` |
 | `SPEAKING` | 「戻る」「ありがとう」「終わり」「寝て」 | `SLEEP` |
 | `SPEAKING` | 「続けて聞く」 | `LISTENING`（WAKING を経由しない） |
+
+壁紙変更の成功も `SPEAKING` の完了表示として扱う。成功色と「壁紙を変えたよ」を20秒表示し、上表の自動復帰で `SLEEP` へ戻す。
 | 任意 | `system.error` | `ERROR` |
 | `ERROR` | 5秒経過 or 再試行タップ | `SLEEP` |
 | 任意 | WS 切断 | `OFFLINE` |

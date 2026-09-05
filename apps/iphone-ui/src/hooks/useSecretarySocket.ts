@@ -54,7 +54,7 @@ export function useSecretarySocket(actions: SocketActions) {
   return socketRef;
 }
 
-function handle(event: Record<string, unknown>, actions: SocketActions): void {
+export function handle(event: Record<string, unknown>, actions: SocketActions): void {
   switch (event.type) {
     // 壁紙を替えると caelestia の scheme.json が作り直され、
     // mode と必要な Material token 一式が届く
@@ -83,7 +83,11 @@ function handle(event: Record<string, unknown>, actions: SocketActions): void {
       if (event.ok) {
         actions.setPapers(null);
         actions.setCaption("壁紙を変えたよ");
-        actions.send("IDLE");
+        actions.qaAddLine("壁紙を変えたよ");
+        actions.qaUpdate({ phase: "done" });
+        // wallpaper.choices で既に SPEAKING へ入っている。ここで IDLE を送ると
+        // 成功色（緑）を一度も見せず即座に SLEEP へ落ちる。通常の回答と同じく
+        // App 側の POST_ANSWER_IDLE_MS に任せ、20秒後に待機へ戻す。
       } else {
         actions.setCaption("壁紙を変えられなかった");
       }
