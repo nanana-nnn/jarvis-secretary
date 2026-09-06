@@ -74,7 +74,13 @@ export default function App() {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  const send = (event: SecretaryEvent) => setState(current => transition(current, event));
+  const send = (event: SecretaryEvent) => setState(current => {
+    // タイマーだけでなく、サーバーから届く session.sleep や別イベント由来の
+    // IDLE も、入力／選択中は無視する。完了操作は先にロックを解除してから
+    // IDLE を送るので、通常の「待機」ボタンやキャンセルは止めない。
+    if (event === "IDLE" && (wallpaperPending || papers || composing)) return current;
+    return transition(current, event);
+  });
 
   function wakeFromTap(event: MouseEvent<HTMLElement>) {
     if (stateRef.current !== "SLEEP") return;
