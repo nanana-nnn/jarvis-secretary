@@ -57,6 +57,11 @@ def test_noteのプロンプトは読み取り専用で出典を求める():
     assert "JARVISのnote書いて" in prompt
 
 
+def test_noteのテスト依頼はCodexの画面表示を使う():
+    prompt = build_prompt("noteのテストしてサムネも", "note")
+    assert "読み取り専用" in prompt
+
+
 def test_noteのテスト依頼は200字前後を指定する():
     prompt = build_prompt("noteのテストして", "note")
     assert "180〜220文字" in prompt

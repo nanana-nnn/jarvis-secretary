@@ -55,7 +55,10 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     # 書き起こしはモデルを常駐させるのでアプリに1つだけ持つ（§8）
     transcriber = Transcriber()
     # エージェントは同時1ジョブ（§10）。アプリで1つ持って直列化する
-    agent = CodexAgent(vault_path)
+    # JARVISの作業はPC画面で見えることが要件。画面のある実機ではCodexを
+    # 常駐ターミナルへ流し、CIや画面なしのテストでは従来の直接実行に戻す。
+    visible_terminal = bool(os.getenv("WAYLAND_DISPLAY") or os.getenv("DISPLAY"))
+    agent = CodexAgent(vault_path, visible=visible_terminal)
     approvals = ApprovalStore(vault_path, config.log_path)
     # どのバックエンドで動いているかは起動ログでしか分からない（.env は
     # 実行時に load_dotenv で読むので /proc/<pid>/environ には出ない）
