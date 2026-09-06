@@ -43,6 +43,7 @@ CURRENT_PATH = Path.home() / ".local/state/caelestia/wallpaper/path.txt"
 CACHE = Path.home() / ".cache/jarvis-secretary"
 CURRENT_MAX = 1400          # 長辺。iPhone で見るには十分で、転送量を抑えられる
 CURRENT_QUALITY = 72
+APPLY_RETRY_DELAY = 0.8
 
 
 def _identifier(path: Path) -> str:
@@ -111,12 +112,9 @@ def thumbnail(path: Path, cache: Path) -> Path | None:
     return out if out.is_file() else None
 
 
-async def apply(path: Path) -> bool:
-    """PC の壁紙を実際に切り替える。成功したら True。
-
-    配色の作り直しも caelestia がやる。こちらは結果を待つだけで、
-    画面への反映は app.py の watch_scheme が拾って配る。
-    """
+async def _apply_once(path: Path) -> tuple[bool, str]:
+    """caelestia を1回呼び、成否と診断用のエラーを返す。"""
+    process = None
     try:
         process = await asyncio.create_subprocess_exec(
             "caelestia", "wallpaper", "-f", str(path),
@@ -124,14 +122,36 @@ async def apply(path: Path) -> bool:
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
-    except (OSError, asyncio.TimeoutError):
-        logger.warning("[PAPER] could not switch to %s", path.name)
-        return False
-    if process.returncode != 0:
-        logger.warning("[PAPER] %s", (stderr or b"").decode("utf-8", "ignore").strip()[:200])
-        return False
-    logger.info("[PAPER] switched to %s", path.name)
-    return True
+    except asyncio.TimeoutError:
+        if process is not None:
+            process.kill()
+            with suppress(Exception):
+                await process.communicate()
+        return False, "timed out after 30s"
+    except OSError as error:
+        return False, str(error)
+    detail = (stderr or b"").decode("utf-8", "ignore").strip()
+    return process.returncode == 0, detail
+
+
+async def apply(path: Path) -> bool:
+    """PC の壁紙を実際に切り替える。成功したら True。
+
+    配色の作り直しも caelestia がやる。こちらは結果を待つだけで、
+    画面への反映は app.py の watch_scheme が拾って配る。
+    """
+    last_error = ""
+    for attempt in range(2):
+        ok, last_error = await _apply_once(path)
+        if ok:
+            logger.info("[PAPER] switched to %s%s", path.name,
+                        " after retry" if attempt else "")
+            return True
+        if attempt == 0:
+            logger.warning("[PAPER] %s failed once; retrying", path.name)
+            await asyncio.sleep(APPLY_RETRY_DELAY)
+    logger.warning("[PAPER] %s failed: %s", path.name, last_error[-1200:])
+    return False
 
 
 # --- 今出ている壁紙（背景として iPhone へ配るぶん）------------------------

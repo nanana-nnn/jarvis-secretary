@@ -3,6 +3,7 @@
 ここで確かめるのは**選択肢の作り方と安全性**であって、見た目ではない。
 実際の切り替え（caelestia の起動）は環境に依存するので呼ばない。
 """
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -94,3 +95,29 @@ def test_wallpaper_requests_never_reach_codex_or_the_vault() -> None:
         assert decision.intent == "WALLPAPER", text
         assert decision.mode == "read_only", f"{text} が書き込みへ回っている"
         assert decision.direct is None
+
+
+def test_transient_caelestia_failure_is_retried(tmp_path: Path, monkeypatch) -> None:
+    """配色生成中の一時的な例外で、押した壁紙が無反応にならない。"""
+    calls = 0
+
+    class Process:
+        def __init__(self, returncode: int):
+            self.returncode = returncode
+
+        async def communicate(self):
+            return b"", b"temporary" if self.returncode else b""
+
+    async def create(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return Process(1 if calls == 1 else 0)
+
+    async def no_wait(_delay):
+        return None
+
+    monkeypatch.setattr(wallpapers.asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(wallpapers.asyncio, "sleep", no_wait)
+
+    assert asyncio.run(wallpapers.apply(tmp_path / "wall.jpg")) is True
+    assert calls == 2
