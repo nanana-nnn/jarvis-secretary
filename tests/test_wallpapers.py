@@ -121,3 +121,24 @@ def test_transient_caelestia_failure_is_retried(tmp_path: Path, monkeypatch) -> 
 
     assert asyncio.run(wallpapers.apply(tmp_path / "wall.jpg")) is True
     assert calls == 2
+
+
+def test_uppercase_extension_is_normalized_for_caelestia(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "IMG_4811.JPG"
+    source.write_bytes(b"image")
+    monkeypatch.setattr(wallpapers, "CACHE", tmp_path / "cache")
+    command_paths: list[str] = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def create(*args, **kwargs):
+        command_paths.append(args[-1])
+        return Process()
+
+    monkeypatch.setattr(wallpapers.asyncio, "create_subprocess_exec", create)
+    assert asyncio.run(wallpapers.apply(source)) is True
+    assert command_paths and command_paths[0].endswith(".jpg")

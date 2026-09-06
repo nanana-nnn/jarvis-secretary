@@ -17,6 +17,7 @@ import asyncio
 from contextlib import suppress
 import hashlib
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -115,9 +116,21 @@ def thumbnail(path: Path, cache: Path) -> Path | None:
 async def _apply_once(path: Path) -> tuple[bool, str]:
     """caelestia を1回呼び、成否と診断用のエラーを返す。"""
     process = None
+    command_path = path
+    # caelestia は画像の中身が正常でも、大文字の .JPG を無効扱いにする。
+    # 元ファイルは変更せず、実行用キャッシュだけ小文字の拡張子に揃える。
+    if path.suffix != path.suffix.lower():
+        normalized_dir = CACHE / "normalized"
+        normalized_dir.mkdir(parents=True, exist_ok=True)
+        command_path = normalized_dir / f"{_identifier(path)}{path.suffix.lower()}"
+        try:
+            if not command_path.is_file() or command_path.stat().st_mtime_ns < path.stat().st_mtime_ns:
+                shutil.copy2(path, command_path)
+        except OSError as error:
+            return False, f"could not prepare normalized image: {error}"
     try:
         process = await asyncio.create_subprocess_exec(
-            "caelestia", "wallpaper", "-f", str(path),
+            "caelestia", "wallpaper", "-f", str(command_path),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
