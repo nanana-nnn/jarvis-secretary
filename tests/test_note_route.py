@@ -57,6 +57,11 @@ def test_noteのプロンプトは読み取り専用で出典を求める():
     assert "JARVISのnote書いて" in prompt
 
 
+def test_noteのテスト依頼は200字前後を指定する():
+    prompt = build_prompt("noteのテストして", "note")
+    assert "180〜220文字" in prompt
+
+
 def test_noteのスキーマだけ題と本文を持つ():
     assert set(schema_for("note")["required"]) == {"title", "body", "spoken_reply", "sources"}
     assert "title" not in schema_for("read_only")["properties"]

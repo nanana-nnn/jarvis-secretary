@@ -142,7 +142,7 @@ NOTE_PROMPT = """あなたはこの Obsidian Vault を根拠に、note の記事
 - 実測値があるならそれを使う。無い数字を作らない
 - 宣伝文句を並べない。何を作っていて、何が分かったかを書く
 - 親しいタメ口。敬語にしない
-- 本文は400〜700文字。段落は空行で区切る
+- {length_instruction}。段落は空行で区切る
 - 題は40文字まで。中身を言い当てる。煽らない
 
 最終メッセージは次のJSONだけを返してください。前後に説明やコードフェンスを付けないでください。
@@ -153,7 +153,8 @@ NOTE_PROMPT = """あなたはこの Obsidian Vault を根拠に、note の記事
 def build_prompt(text: str, mode: str) -> str:
     """§10「プロンプト組み立て」の5点を必ず入れる。"""
     if mode == "note":
-        return NOTE_PROMPT.format(text=text)
+        length_instruction = "本文は180〜220文字（テスト用の短い記事）" if "テスト" in text else "本文は400〜700文字"
+        return NOTE_PROMPT.format(text=text, length_instruction=length_instruction)
     # propose_write の作業ディレクトリは Vault そのものではなく使い捨てのコピー
     # （§11「エージェントには一時作業領域で変更させ、承認後に Vault へ適用する」）。
     # ここで「変更しないで」と言うと編集が起きず、差分が空になって承認画面が
