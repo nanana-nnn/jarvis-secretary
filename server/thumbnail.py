@@ -13,6 +13,8 @@ import subprocess
 import textwrap
 
 WIDTH, HEIGHT = 1280, 670
+# Image 2で生成した背景。タイトル文字はImageMagickで後乗せして可読性を確保する。
+BASE_IMAGE = Path(__file__).with_name("assets") / "note-header-base-image2.png"
 # 生成りと紺。JARVISの記録シリーズの見た目を揃える
 BACKGROUND = "#F4EFE6"
 INK = "#14324F"
@@ -39,13 +41,23 @@ def make(title: str, out_path: Path, subtitle: str = "") -> Path | None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # 行数で本文の開始位置を変える。少ない行を上に寄せない
     top = {1: 300, 2: 250, 3: 200}[len(lines)]
-    command = [
-        "magick", "-size", f"{WIDTH}x{HEIGHT}", f"xc:{BACKGROUND}",
-        "-fill", INK, "-draw", f"rectangle 0,0 {WIDTH},12",
-        "-font", FONT,
-    ]
+    if BASE_IMAGE.is_file():
+        # 生成背景を横長にトリミングし、左側に半透明の面を置く。
+        command = [
+            "magick", str(BASE_IMAGE), "-resize", f"{WIDTH}x{HEIGHT}^",
+            "-gravity", "center", "-extent", f"{WIDTH}x{HEIGHT}",
+            "-fill", "#071426B8", "-draw", f"rectangle 0,0 {WIDTH * 0.62},{HEIGHT}",
+            "-fill", "#55D6FF", "-draw", f"rectangle 0,0 14,{HEIGHT}",
+            "-font", FONT,
+        ]
+    else:
+        command = [
+            "magick", "-size", f"{WIDTH}x{HEIGHT}", f"xc:{BACKGROUND}",
+            "-fill", INK, "-draw", f"rectangle 0,0 {WIDTH},12",
+            "-font", FONT,
+        ]
     for index, line in enumerate(lines):
-        command += ["-fill", INK, "-pointsize", "70",
+        command += ["-fill", "#F4FAFF" if BASE_IMAGE.is_file() else INK, "-pointsize", "70",
                     "-annotate", f"+80+{top + index * 95}", line]
     if subtitle:
         command += ["-fill", ACCENT, "-pointsize", "32",

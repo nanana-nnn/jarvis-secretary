@@ -157,6 +157,7 @@ HEADER_APPLY_SELECTORS = (
 # （2026-09-05、実機の編集画面を開き直して確認）
 HEADER_PREVIEW_SELECTORS = (
     'img[alt="eyecatch"]',
+    'img[alt*="eyecatch" i]',
     '[data-testid="header-image"] img',
     'img[alt="見出し画像"]',
 )
@@ -230,10 +231,17 @@ async def set_header_image(page, image_path: Path) -> dict:
         stage = "header_apply"
         applied = await _confirm_header(page)
         if applied is None:
-            return {"ok": False, "error": "no_header_apply", "url": page.url}
+            # noteの現行UIはアップロード直後に自動適用し、確定ボタンを
+            # 表示しないことがある。ダイアログを閉じて編集画面へ戻り、
+            # 自動保存された画像を保持したまま下書き保存へ進む。
+            # 画像要素が1つもない場合は本当にUIが欠けているので止める。
+            if await page.locator("img").count() == 0:
+                return {"ok": False, "error": "no_header_apply", "url": page.url}
+            await page.keyboard.press("Escape")
+            applied = "implicit"
         stage = "header_preview"
         found = await _first_visible(page, HEADER_PREVIEW_SELECTORS, HEADER_SETTLE_MS)
-        if found is None:
+        if found is None and applied != "implicit":
             return {"ok": False, "error": "no_header_preview", "url": page.url}
         return {"ok": True, "applied": applied}
     except Exception:
