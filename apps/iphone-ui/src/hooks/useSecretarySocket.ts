@@ -98,6 +98,7 @@ export function handle(event: Record<string, unknown>, actions: SocketActions): 
 
     // 答えを作り始めた。時間がかかるので画面で分かるようにする（§12）
     case "agent.started":
+      if (event.intent === "WALLPAPER") actions.setWallpaperPending(true);
       actions.qaUpdate({ phase: "thinking" });
       // 分単位かかる用件は、待ち時間の見当と止め方を最初に見せる。
       // 黙って何分も待たせないための約束（2026-09-02）

@@ -40,3 +40,13 @@ it('壁紙変更後は成功表示を残し、すぐ待機へ戻さない', () =
   expect(actions.qaUpdate).toHaveBeenCalledWith({ phase: 'done' });
   expect(actions.send).not.toHaveBeenCalledWith('IDLE');
 });
+
+it('壁紙処理開始時点で待機タイマーを止める', () => {
+  const actions: SocketActions = {
+    send: vi.fn(), setCaption: vi.fn(), setSpeaking: vi.fn(), setHeardNothingAt: vi.fn(),
+    setPapers: vi.fn(), setWallpaperPending: vi.fn(), setApplyingPaper: vi.fn(), setApproval: vi.fn(),
+    setLive: vi.fn(), setTelemetry: vi.fn(), qaUpdate: vi.fn(), qaAddLine: vi.fn(), qaAddLines: vi.fn(),
+  };
+  handle({ type: 'agent.started', intent: 'WALLPAPER', long: false }, actions);
+  expect(actions.setWallpaperPending).toHaveBeenCalledWith(true);
+});
