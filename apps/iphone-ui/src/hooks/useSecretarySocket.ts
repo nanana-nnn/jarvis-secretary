@@ -19,6 +19,7 @@ export type SocketActions = {
   setSpeaking: (value: boolean) => void;
   setHeardNothingAt: (at: number) => void;
   setPapers: (items: WallpaperChoice[] | null) => void;
+  setWallpaperPending: (value: boolean) => void;
   setApplyingPaper: (id: string | null) => void;
   setApproval: (approval: Approval | null) => void;
   setLive: (update: (previous: LiveFacts) => LiveFacts) => void;
@@ -69,6 +70,7 @@ export function handle(event: Record<string, unknown>, actions: SocketActions): 
     // 「壁紙かえたい」への返事。1段目をスライダーへ差し替える
     case "wallpaper.choices":
       if (!Array.isArray(event.items)) return;
+      actions.setWallpaperPending(false);
       actions.setPapers(event.items as WallpaperChoice[]);
       actions.setApplyingPaper(null);
       actions.setCaption("どれにする？");
@@ -80,6 +82,7 @@ export function handle(event: Record<string, unknown>, actions: SocketActions): 
     // wallpaper.changed / scheme.changed が別途届いて行う
     case "wallpaper.applied":
       actions.setApplyingPaper(null);
+      actions.setWallpaperPending(false);
       if (event.ok) {
         actions.setPapers(null);
         actions.setCaption("壁紙を変えたよ");

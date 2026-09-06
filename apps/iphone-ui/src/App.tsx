@@ -62,6 +62,7 @@ export default function App() {
   // 壁紙スライダー（2026-09-05）。null なら出さない。
   // applying は「押したがまだ切り替わっていない1枚」。数秒かかるので目印を出す
   const [papers, setPapers] = useState<WallpaperChoice[] | null>(null);
+  const [wallpaperPending, setWallpaperPending] = useState(false);
   const [applyingPaper, setApplyingPaper] = useState<string | null>(null);
   const [approval, setApproval] = useState<Approval | null>(null);
   // 「チャット」で開いた打ち込みモード（2026-09-05）。待機へ戻ると閉じる
@@ -84,7 +85,7 @@ export default function App() {
 
   const socketRef = useSecretarySocket({
     send, setCaption, setSpeaking, setHeardNothingAt, setPapers, setApplyingPaper,
-    setApproval, setLive, setTelemetry,
+    setApproval, setLive, setTelemetry, setWallpaperPending,
     qaUpdate: qa.update, qaAddLine: qa.addLine, qaAddLines: qa.addLines,
   });
 
@@ -202,7 +203,7 @@ export default function App() {
     if (state === "SPEAKING") {
       // 壁紙スライダーを開けている間は寝かせない。75枚を選ぶのに
       // POST_ANSWER_IDLE_MS(20秒)では足りず、選んでいる最中に消える
-      if (papers) return;
+      if (papers || wallpaperPending || composing) return;
       const id = setTimeout(() => { qa.clear(); send("IDLE"); }, POST_ANSWER_IDLE_MS);
       return () => clearTimeout(id);
     }
@@ -210,7 +211,7 @@ export default function App() {
       const id = setTimeout(() => send("RETRY"), 5000);
       return () => clearTimeout(id);
     }
-  }, [state, speaking, papers]);
+  }, [state, speaking, papers, wallpaperPending, composing]);
 
   async function enableMic() {
     // タップ自体が届いているかを切り分けるための即時マーカー
@@ -235,6 +236,7 @@ export default function App() {
   function sendChat(text: string) {
     const value = text.trim();
     if (!value) return;
+    setComposing(false);
     if (qa.exchanges.length) qa.append(value, "thinking");
     else qa.open(value, "thinking");
     setCaption(value);
@@ -304,7 +306,7 @@ export default function App() {
     socketRef.current?.send({ type: "text.input", text });
   };
   const actions: LiveAction[] = [
-    { key: "paper", icon: "\u{f02e9}", label: "背景", onPress: () => ask("壁紙かえたい") },
+    { key: "paper", icon: "\u{f02e9}", label: "背景", onPress: () => { setWallpaperPending(true); ask("壁紙かえたい"); } },
     // **チャットは打ち込む口を開く。** 声で頼めない場面（人の前・静かな所）でも
     // Codex へ通せるようにする。押しただけでは何も送らない
     { key: "chat", icon: "\u{f0b79}", label: "チャット", onPress: () => setComposing(true) },
@@ -331,7 +333,7 @@ export default function App() {
             setApplyingPaper(id);
             socketRef.current?.send({ type: "wallpaper.select", id });
           }}
-          onCancel={() => { setPapers(null); setApplyingPaper(null); setCaption(""); send("IDLE"); }} />
+          onCancel={() => { setPapers(null); setApplyingPaper(null); setWallpaperPending(false); setCaption(""); send("IDLE"); }} />
       : composing || (qa.exchanges.length && !qa.listening)
       ? <AnswerCard exchanges={qa.exchanges} onBack={closeQa} onContinue={continueQa}
           obsidianActive={Boolean(live.apps.obsidian?.alive)}

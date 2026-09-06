@@ -28,7 +28,7 @@ it.each([4000, 1006])('handles close %s without a reconnect fight', code => {
 it('壁紙変更後は成功表示を残し、すぐ待機へ戻さない', () => {
   const actions: SocketActions = {
     send: vi.fn(), setCaption: vi.fn(), setSpeaking: vi.fn(), setHeardNothingAt: vi.fn(),
-    setPapers: vi.fn(), setApplyingPaper: vi.fn(), setApproval: vi.fn(),
+    setPapers: vi.fn(), setWallpaperPending: vi.fn(), setApplyingPaper: vi.fn(), setApproval: vi.fn(),
     setLive: vi.fn(), setTelemetry: vi.fn(), qaUpdate: vi.fn(),
     qaAddLine: vi.fn(), qaAddLines: vi.fn(),
   };
