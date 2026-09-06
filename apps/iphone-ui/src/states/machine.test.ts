@@ -13,6 +13,10 @@ describe("secretary state machine", () => {
     expect(transition("WAKING", "WAKE_FINISHED")).toBe("LISTENING");
     expect(transition("THINKING", "TAP_DETECTED")).toBe("THINKING");
   });
+  it("壁紙処理はLISTENINGやSPEAKINGから始めても考え中へ進む", () => {
+    expect(transition("LISTENING", "AGENT_STARTED")).toBe("THINKING");
+    expect(transition("SPEAKING", "AGENT_STARTED")).toBe("THINKING");
+  });
   it("moves every state offline on disconnect", () => expect(transition("THINKING", "DISCONNECTED")).toBe("OFFLINE"));
 
   it("拍手直後、WAKE_FINISHED より先に聞き取り失敗が届いても AWAKENING で固まらない", () => {

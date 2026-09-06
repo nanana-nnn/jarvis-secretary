@@ -214,6 +214,7 @@ jarvis-secretary/
 | `WAKING` | 衝撃波アニメ完了（250ms） | `LISTENING` |
 | `WAKING` | 拍手の固定質問への応答が届く（`agent.started`） | `THINKING` |
 | `LISTENING` | サーバーが `audio.final` を返す | `TRANSCRIBING` |
+| `LISTENING` | 画面ボタンから壁紙・その他の処理が始まる（`agent.started`） | `THINKING` |
 | `LISTENING` | 10秒無音（発話なし） | `SLEEP` |
 | `TRANSCRIBING` | `agent.started` | `THINKING` |
 | `THINKING` | `approval.required` | `APPROVAL` |
@@ -224,6 +225,7 @@ jarvis-secretary/
 | `SPEAKING` | カード表示から20秒（「戻る」「続けて聞く」が無ければ） | `SLEEP` |
 | `SPEAKING` | 「戻る」「ありがとう」「終わり」「寝て」 | `SLEEP` |
 | `SPEAKING` | 「続けて聞く」 | `LISTENING`（WAKING を経由しない） |
+| `SPEAKING` | 画面ボタンから壁紙・その他の処理が始まる（`agent.started`） | `THINKING` |
 
 壁紙変更の成功も `SPEAKING` の完了表示として扱う。成功色と「壁紙を変えたよ」を20秒表示し、上表の自動復帰で `SLEEP` へ戻す。
 | 任意 | `system.error` | `ERROR` |
