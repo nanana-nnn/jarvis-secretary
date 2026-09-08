@@ -28,6 +28,8 @@ export default defineConfig(({ mode }) => {
     // 承認／却下は同一オリジンの相対URLで呼ぶ。iPhoneが5173へ送った
     // POSTをFastAPIへ中継しないと、承認画面だけがViteの404になる。
     "/jobs": { target: api, secure: false, changeOrigin: true },
+    // 端末の登録（§13）。ここを通さないと、合図の引き換えだけが Vite の 404 になる
+    "/pair": { target: api, secure: false, changeOrigin: true },
   };
   return {
     envDir: root,

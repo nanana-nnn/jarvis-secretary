@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { withToken } from "../pairing";
 
 /**
  * 「壁紙かえたい」で1段目のカードと差し替わる、横スクロールのスライダー
@@ -41,7 +42,7 @@ export function WallpaperPicker(
         >
           {/* loading="lazy" で、見えている数枚だけ取りに行く（75枚を一度に
               取りに行かせない）。decoding=async で描画を止めない */}
-          <img src={`/wallpapers/${item.id}/thumb.webp`} alt="" loading="lazy" decoding="async" />
+          <img src={withToken(`/wallpapers/${item.id}/thumb.webp`)} alt="" loading="lazy" decoding="async" />
         </button>
       ))}
       {items.length === 0 ? <p className="paper-empty">壁紙が見つからなかった</p> : null}

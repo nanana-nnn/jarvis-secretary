@@ -8,3 +8,7 @@
 import os
 
 os.environ.setdefault("STT_WARMUP", "0")
+# 端末認証は既定で必須（§13）。ペアリングを通していない既存のテストが
+# 全部 401 になるので、ここで切る。**認証そのものの検証は
+# `tests/test_pairing.py` が auth_required=True を明示して行う。**
+os.environ.setdefault("AUTH_REQUIRED", "0")

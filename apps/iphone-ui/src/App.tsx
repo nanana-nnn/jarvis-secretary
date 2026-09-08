@@ -10,6 +10,7 @@ import { Live, type LiveAction, type LiveFacts } from "./components/Live";
 import { SizeProbe } from "./components/SizeProbe";
 import { copy } from "./copy";
 import { loadClapSettings } from "./clap-settings";
+import { tokenHeaders } from "./pairing";
 import type { Approval, Telemetry } from "./model";
 import { useMicrophone } from "./hooks/useMicrophone";
 import { useQaCard } from "./hooks/useQaCard";
@@ -269,7 +270,8 @@ export default function App() {
     if (!approval) return;
     const current = approval;
     try {
-      const response = await fetch(`/jobs/${encodeURIComponent(current.id)}/${approve ? "approve" : "reject"}`, { method: "POST" });
+      const response = await fetch(`/jobs/${encodeURIComponent(current.id)}/${approve ? "approve" : "reject"}`,
+                                  { method: "POST", headers: tokenHeaders() });
       const result = await response.json() as { summary?: string; spoken_reply?: string };
       if (!response.ok) throw new Error(typeof result.summary === "string" ? result.summary : "APPROVAL FAILED");
       setApproval(null);

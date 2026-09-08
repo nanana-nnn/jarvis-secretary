@@ -12,3 +12,6 @@ dist/
 # 作業中のバックアップ
 .asset-backup/
 *.bak
+
+# 端末の登録（DESIGN.md §13）
+state/

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ReconnectingSocket, type SocketStatus } from "../api/socket";
+import { withToken } from "../pairing";
 import { applyScheme, applyWallpaper } from "../theme";
 import type { WallpaperChoice } from "../components/WallpaperPicker";
 import type { LiveFacts } from "../components/Live";
@@ -37,7 +38,7 @@ export function useSecretarySocket(actions: SocketActions) {
   useEffect(() => {
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     const socket = new ReconnectingSocket(
-      `${protocol}://${location.host}/ws`,
+      withToken(`${protocol}://${location.host}/ws`),
       (status: SocketStatus) => {
         if (status === "open") actionsRef.current.send("CONNECTED");
         else if (status === "closed") actionsRef.current.send("DISCONNECTED");

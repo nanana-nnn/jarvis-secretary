@@ -23,6 +23,9 @@ cd "$project_dir"
 
 export HOST="$host"
 export ALLOWED_ORIGINS="https://$host:$port"
+# 見た目の確認だけの口。127.0.0.1 にしか建てないので、この起動では端末登録を求めない
+# （§13。登録済みの端末が無いPCでも `?state=` の確認ができるようにする）
+export AUTH_REQUIRED=0
 
 server_pid=
 preview_pid=

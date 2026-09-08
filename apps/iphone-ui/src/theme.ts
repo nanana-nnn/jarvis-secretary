@@ -4,6 +4,7 @@
  * ここだけが `document` を直接触る。**届いた値は信頼せず形だけ見る**：
  * Material トークンが1つでも欠けたら配色ごと捨てて、前の見た目を残す。
  */
+import { withToken } from "./pairing";
 
 // サーバーから来る差し色を検査する。信頼せずに形だけ見る。
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -83,5 +84,5 @@ export function applyScheme(value: unknown): void {
 export function applyWallpaper(version: unknown): void {
   const tag = typeof version === "string" ? version : "";
   document.documentElement.style.setProperty(
-    "--wallpaper", tag ? `url("/wallpaper.webp?v=${tag}")` : "none");
+    "--wallpaper", tag ? `url("${withToken(`/wallpaper.webp?v=${tag}`)}")` : "none");
 }

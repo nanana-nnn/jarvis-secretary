@@ -451,3 +451,14 @@ button { border: 1px solid var(--scheme-outline); border-radius: 8px; padding: 7
 .debug ol { padding-left: 18px } .debug li { color: var(--scheme-muted) } .debug li.accepted { color: var(--scheme-primary) }
 
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important } }
+
+/* 未登録の画面（DESIGN.md §13）。**普段は出ない。**
+   専用の色を作らず、既にある文字色と面の色をそのまま使う */
+.pairing {
+  display: flex; flex-direction: column; justify-content: center;
+  gap: 12px; min-height: 100dvh; padding: 24px;
+}
+.pairing h1 { letter-spacing: .3em; font-size: 20px; }
+.pairing ol { padding-left: 1.2em; display: flex; flex-direction: column; gap: 8px; }
+.pairing code { font-size: 13px; word-break: break-all; }
+.pairing-note { opacity: .6; font-size: 13px; }

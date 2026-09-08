@@ -11,6 +11,7 @@
 | caelestia の配色 | `scheme.py` |
 | 壁紙の一覧・切り替え・変換 | `wallpapers.py` |
 | Vault の git の状態 | `gitstate.py` |
+| 端末の登録と照合 | `pairing.py` |
 """
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, Response, WebSocket
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Header, Response, WebSocket
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import wallpapers
@@ -29,6 +30,7 @@ from .agent import CodexAgent
 from .approval import ApprovalStore
 from .config import Settings
 from .hub import Hub
+from .pairing import DeviceStore, PairingStore
 from .scheme import DEFAULT_SCHEME_PATH
 from .session import Session
 from .transcribe import Transcriber
@@ -46,11 +48,15 @@ logger = logging.getLogger("uvicorn.error")
 # 既定は当てにしないこと（公開リポジトリなので、作者の実パスは置かない）
 DEFAULT_VAULT_PATH = Path(os.getenv("VAULT_PATH") or Path.home() / "Documents/Vault")
 
+# 端末の登録を置く場所（§13）。gitignore 対象。**Vault の中には置かない**
+STATE_DIR = Path(os.getenv("STATE_DIR") or "./state")
+
 wallpaper_version = wallpapers.current_version
 
 
 def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCHEME_PATH,
-               vault_path: Path = DEFAULT_VAULT_PATH, warmup: bool | None = None) -> FastAPI:
+               vault_path: Path = DEFAULT_VAULT_PATH, warmup: bool | None = None,
+               auth_required: bool | None = None, state_dir: Path | None = None) -> FastAPI:
     config = settings or Settings.from_env()
     hub = Hub(vault_path, scheme_path)
     # 書き起こしはモデルを常駐させるのでアプリに1つだけ持つ（§8）
@@ -63,6 +69,15 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     # 落としたくない環境では STT_WARMUP=0、あるいは warmup=False で切る
     if warmup is None:
         warmup = os.getenv("STT_WARMUP") != "0"
+    # 端末認証（§13）。**既定は必須。** 画面のない検証やテストでだけ切る
+    if auth_required is None:
+        auth_required = os.getenv("AUTH_REQUIRED") != "0"
+    state = state_dir or STATE_DIR
+    pairings = PairingStore(state / "pairing.json")
+    devices = DeviceStore(state / "devices.json")
+
+    def allowed(token: str | None) -> bool:
+        return not auth_required or devices.verify(token)
     visible_terminal = bool(os.getenv("WAYLAND_DISPLAY") or os.getenv("DISPLAY"))
     agent = CodexAgent(vault_path, visible=visible_terminal)
     approvals = ApprovalStore(vault_path, config.log_path)
@@ -109,20 +124,40 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         allow_headers=["*"],
     )
 
+    @app.post("/pair")
+    async def pair(body: dict) -> Response:
+        """合図と端末トークンを引き換える（§13）。
+
+        合図を作るのは `scripts/show-qr.py`。**合っても外れても1回で消える。**
+        """
+        if not pairings.consume(str(body.get("code", ""))):
+            return JSONResponse({"ok": False, "error": "pairing code invalid or expired"},
+                                status_code=403)
+        return JSONResponse({"ok": True, "token": devices.register(str(body.get("name", ""))[:40])})
+
     @app.post("/jobs/{job_id}/approve")
-    async def approve(job_id: str) -> dict[str, object]:
-        return await approvals.resolve(job_id, approve=True)
+    async def approve(job_id: str, x_device_token: str | None = Header(default=None)) -> Response:
+        if not allowed(x_device_token):
+            return JSONResponse({"ok": False, "error": "unpaired device"}, status_code=401)
+        return JSONResponse(await approvals.resolve(job_id, approve=True))
 
     @app.post("/jobs/{job_id}/reject")
-    async def reject(job_id: str) -> dict[str, object]:
-        return await approvals.resolve(job_id, approve=False)
+    async def reject(job_id: str, x_device_token: str | None = Header(default=None)) -> Response:
+        if not allowed(x_device_token):
+            return JSONResponse({"ok": False, "error": "unpaired device"}, status_code=401)
+        return JSONResponse(await approvals.resolve(job_id, approve=False))
 
     @app.get("/health")
     async def health() -> dict[str, object]:
-        return {"ok": True, "phase": 1, "connection": {"https": True, "websocket": True}}
+        """設置の確認に使うので**トークンを要求しない。** 中身は固定値だけ。"""
+        return {"ok": True, "phase": 1, "connection": {"https": True, "websocket": True},
+                "auth": {"required": auth_required, "devices": devices.count()}}
 
     @app.get("/wallpaper.webp")
-    async def wallpaper() -> Response:
+    async def wallpaper(token: str | None = None) -> Response:
+        # 画像は <img src> で取りに来るのでヘッダを付けられない。合図はクエリで渡す
+        if not allowed(token):
+            return Response(status_code=401)
         source = wallpapers.current_source()
         out = wallpapers.current_webp(source, wallpapers.current_version(source))
         if out is None:
@@ -132,12 +167,14 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
                             headers={"Cache-Control": "public, max-age=604800, immutable"})
 
     @app.get("/wallpapers/{identifier}/thumb.webp")
-    async def wallpaper_thumb(identifier: str) -> Response:
+    async def wallpaper_thumb(identifier: str, token: str | None = None) -> Response:
         """スライダーに並べるサムネイル。
 
         **一覧に載っているものしか返さない。** identifier はパスではなく札なので、
         任意のパスを送りつけても選択肢の外は取り出せない（wallpapers.resolve）
         """
+        if not allowed(token):
+            return Response(status_code=401)
         path = wallpapers.resolve(identifier)
         if path is None:
             return Response(status_code=404)
@@ -152,6 +189,10 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         origin = socket.headers.get("origin")
         if config.allowed_origins and origin not in config.allowed_origins:
             await socket.close(code=1008, reason="origin not allowed")
+            return
+        # ブラウザの WebSocket はヘッダを足せない。トークンはクエリで受け取る（§13）
+        if not allowed(socket.query_params.get("token")):
+            await socket.close(code=4001, reason="unpaired device")
             return
         await socket.accept()
         # 常設端末は1画面だけを音声入力元にする。古いPWAタブが残ると、

@@ -30,7 +30,10 @@ def test_health_reports_phase_one_connection_capabilities() -> None:
     with TestClient(create_app(SETTINGS, NO_SCHEME)) as client:
         response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "phase": 1, "connection": {"https": True, "websocket": True}}
+    body = response.json()
+    assert body["ok"] is True and body["phase"] == 1
+    assert body["connection"] == {"https": True, "websocket": True}
+    assert body["auth"] == {"required": False, "devices": 0}, "テストは認証を切って走る（conftest）"
 
 
 def test_websocket_ready_and_ping() -> None:

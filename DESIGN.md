@@ -167,6 +167,7 @@ jarvis-secretary/
 │   ├── note_draft.py                   # noteのエディタ操作（§18.1）
 │   ├── note_writer.py                  # 声→下書きの取り回し。常駐ブラウザ1枚（§18.2）
 │   ├── thumbnail.py                    # 見出し画像を題から作る（§18.2）
+│   ├── pairing.py                      # 端末の登録と照合（§13）
 │   ├── clock.py                        # イベントに載せる時刻
 │   └── config.py                       # .env 読み込みと検証
 ├── tests/                              # pytest（server 側。test_lifecycle_regressions.py は切断・承認・競合の回帰検証）
@@ -177,7 +178,9 @@ jarvis-secretary/
 │   ├── phase-0-1-acceptance.md
 │   └── archive/                        # 実装の根拠にしない過去の検討
 ├── examples/                           # 実際に通した入出力の控え
+├── state/                              # 端末の登録（gitignore。STATE_DIR で移せる）
 ├── scripts/
+│   ├── show-qr.py                      # ペアリングの合図を出す（§13）
 │   ├── gen-cert.sh                     # LAN 用自己署名証明書
 │   └── serve-local.sh                  # 外出先で 127.0.0.1 に建てる
 ├── .env.example
@@ -509,13 +512,17 @@ MVP は**同一 Wi-Fi 内限定**。
 
 - PC は LAN アドレスで待ち受ける（`0.0.0.0` ではなく LAN IP を明示）
 - iOS のマイク許可は **secure context 必須**。LAN IP では `http://` が secure context にならないため、`scripts/gen-cert.sh` で自己署名証明書を作り **HTTPS/WSS** で待ち受け、iPhone に証明書を信頼させる
-**以下の4行は未実装（2026-09-08 時点）。** `scripts/show-qr.py` も `/pair` も無い。
-実際に効いているのは CORS と WS の Origin チェックだけで、**端末認証は無い**（SETUP.md §11）。
-
-- ~~初回に PC 画面へ QR コードを表示してペアリングする（`scripts/show-qr.py`）~~
-- ~~QR には**有効期限 5 分**のペアリングトークンを含める~~
-- ~~`/pair` で端末固有トークンへ交換し、iPhone の `localStorage` に保存する~~
-- ~~以後の HTTP / WS は端末トークン必須~~
+- 初回に PC でペアリングの合図を出す（`scripts/show-qr.py`）。QR は `qrcode` が入っていれば出し、
+  無くても URL とコードで登録できる
+- 合図は**有効期限 5 分・1回きり**。`state/pairing.json` に置き、サーバーが読んで消す
+  （合図を作るのは別プロセスなので、メモリでは渡せない）
+- `/pair` で端末トークンへ交換し、`localStorage` に保存する。**URL には残さない**（引き換えたらクエリを消す）
+- 以後の WS・承認・画像は端末トークン必須。サーバーは実値を持たず SHA-256 だけを持ち、
+  照合は `hmac.compare_digest`
+- ブラウザの WebSocket と `<img src>` はヘッダを足せないので、**トークンはクエリ `?token=`** で渡す。
+  承認・却下は fetch なのでヘッダ `X-Device-Token`
+- `/health` だけは開けておく（設置の確認に使う。返すのは固定値と登録台数だけ）
+- 切るときは `AUTH_REQUIRED=0`（画面のない検証・自動テスト用）。**既定は必須**
 - CORS は登録済みの iPhone UI オリジンだけ許可
 - **インターネットへポート開放しない。** UPnP・ポートフォワードを設定しない
 - 外出先対応は MVP 後。必要なら Tailscale を検討し、公開 URL 方式にはしない
@@ -534,6 +541,10 @@ PORT=8787
 TLS_CERT=./certs/lan.crt
 TLS_KEY=./certs/lan.key
 ALLOWED_ORIGINS=https://192.168.0.x:5173
+
+# --- 端末認証（§13）---
+AUTH_REQUIRED=1             # 0 で切る（画面のない検証用）
+STATE_DIR=./state           # 登録済み端末の置き場
 
 # --- Vault ---
 VAULT_PATH=/path/to/your/vault
