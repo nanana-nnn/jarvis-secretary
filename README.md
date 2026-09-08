@@ -1,13 +1,13 @@
 # JARVIS Secretary
 
-手を2回叩くと、スタンドのスマホが起きる。話しかけると、**あなたのPC**がその場で文字起こしして、
+指を1回鳴らすと、スタンドのスマホが起きる。話しかけると、**あなたのPC**がその場で文字起こしして、
 Obsidian の Vault を読んで答える。Vault への書き込みは、スマホに出る承認を通ったものだけ。
 
 このアプリはクラウドの AI API を呼ばない。手拍子の判定はスマホの中、音声認識は PC の中で終わり、
 通信は同じ Wi-Fi の中に閉じている。考える仕事は、すでにあなたの PC へ入っている
 **Codex CLI か Claude Code** に渡す（`.env` の1行で切り替わる）。
 
-> **English** — A LAN-only voice secretary for a phone on a stand. Clap twice to wake it, speak, and
+> **English** — A LAN-only voice secretary for a phone on a stand. Snap your fingers to wake it, speak, and
 > your own PC transcribes locally (faster-whisper), reads your Obsidian vault, and answers on screen.
 > Writes are approval-gated. The app calls no cloud AI API: the thinking is delegated to the Codex CLI
 > or Claude Code already installed on your machine. **The setup guide ([SETUP.md](SETUP.md)) is written
@@ -18,7 +18,7 @@ Obsidian の Vault を読んで答える。Vault への書き込みは、スマ�
 
 | | |
 |---|---|
-| **手拍子2回で起きる** | 判定はブラウザの AudioWorklet の中。マイクの音はどこへも送らない |
+| **指パッチン1回で起きる** | 判定はブラウザの AudioWorklet の中。マイクの音はどこへも送らない。誤起動が増えたら手拍子2回（`mode: "double"`）へ逃がせる |
 | **話しかけて聞く** | 発話の終わりを VAD で切り、PC の faster-whisper で文字起こしする |
 | **Vault を読んで答える** | 「今日のタスク」「先週決めたこと」を Markdown から拾い、画面のカードに出す |
 | **書き込みは承認制** | 提案がスマホに出て、承認するまで1文字も書かない。120秒で自動却下 |
