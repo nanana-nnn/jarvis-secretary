@@ -238,3 +238,36 @@ def test_websocket_accepts_wake_candidate_log() -> None:
                 "accepted": True,
                 "reason": "wake",
             })
+
+
+def test_startup_preloads_the_transcription_model(monkeypatch) -> None:
+    """モデルは起動時に読む。最初の1発話でロックの中で読ませない（2026-09-08）。"""
+    calls: list[str] = []
+
+    class StubTranscriber:
+        error = None
+
+        def load(self) -> None:
+            calls.append("load")
+
+    monkeypatch.setattr("server.app.Transcriber", StubTranscriber)
+    with TestClient(create_app(SETTINGS, NO_SCHEME, warmup=True)) as client:
+        client.get("/health")
+    assert calls == ["load"], "起動時にモデルを読んでいない"
+
+
+def test_startup_can_skip_the_preload(monkeypatch) -> None:
+    """先読みは切れる。ディスプレイもモデルも無い環境で起動を止めない。"""
+    calls: list[str] = []
+
+    class StubTranscriber:
+        error = None
+
+        def load(self) -> None:
+            calls.append("load")
+
+    monkeypatch.setattr("server.app.Transcriber", StubTranscriber)
+    with TestClient(create_app(SETTINGS, NO_SCHEME, warmup=False)) as client:
+        client.get("/health")
+    assert calls == []
+

@@ -5,8 +5,11 @@
 import math
 import struct
 
+import random
+
 from server.audio import (FRAME_BYTES, FRAME_MS, MAX_UTTERANCE_MS, MIN_UTTERANCE_MS,
-                          NOISE_UTTERANCE_MS, SAMPLE_RATE, SILENCE_MS, SpeechSplitter)
+                          NOISE_UTTERANCE_MS, QUIET_NOISE_RMS, SAMPLE_RATE, SILENCE_MS,
+                          SILENCE_MS_QUIET, SpeechSplitter, frame_rms, silence_target_ms)
 
 
 def tone(ms: int, hz: int = 220) -> bytes:
@@ -26,6 +29,22 @@ def silence(ms: int) -> bytes:
     return b"\x00\x00" * (SAMPLE_RATE * ms // 1000)
 
 
+def room_noise(ms: int, amp: int = 1500, rng: random.Random | None = None) -> bytes:
+    """webrtcvad が声と判定しない雑音。**実測で選んだ振幅**（白色 1500 で 0/10 判定）。
+
+    ファンや遠くのテレビのように「無音ではないが声でもない」音を作る。
+    種を固定して、判定が走るたびに変わらないようにする。
+    **最初の3フレームは webrtcvad が声と判定する**（内部の雑音推定が追いつくまで）。
+    暗騒音を上げたいときは、それを通り越すだけの長さを流すこと（実測）。
+
+    **切れ目なく流すときは `rng` を持ち回すこと。** 呼ぶたびに種を作り直すと同じ波形が
+    繰り返され、その継ぎ目を webrtcvad が周期的に声と判定して無音が積み上がらない。
+    """
+    rng = rng or random.Random(7)
+    return b"".join(struct.pack("<h", rng.randint(-amp, amp))
+                    for _ in range(SAMPLE_RATE * ms // 1000))
+
+
 def test_frame_size_matches_webrtcvad_requirement() -> None:
     """webrtcvad は 10/20/30ms しか受け付けない。ここがずれると全部落ちる。"""
     assert FRAME_MS in (10, 20, 30)
@@ -39,7 +58,7 @@ def test_silence_alone_never_produces_an_utterance() -> None:
 
 
 def test_utterance_ends_after_the_specified_silence() -> None:
-    """§6 VAD_SILENCE_MS = 1200。無音がそれだけ続いたら終端する。
+    """静かな部屋では SILENCE_MS_QUIET（700ms）で終端する（§6、2026-09-08）。
 
     実時間は 1200ms ちょうどにはならない。VAD は無音へ移る境目の数フレームを
     まだ声と判定するので、そのぶん後ろへずれる。仕様が言っているのは
@@ -55,8 +74,9 @@ def test_utterance_ends_after_the_specified_silence() -> None:
         fed += 100
 
     assert done, "無音を足しても終端しない"
-    assert fed >= SILENCE_MS, f"規定({SILENCE_MS}ms)より早く切れている: {fed}ms"
-    assert fed <= SILENCE_MS * 2, f"終端が遅すぎる: {fed}ms"
+    assert splitter.silence_target == SILENCE_MS_QUIET, "無音だけの部屋は静かと判定する"
+    assert fed >= SILENCE_MS_QUIET, f"規定({SILENCE_MS_QUIET}ms)より早く切れている: {fed}ms"
+    assert fed <= SILENCE_MS_QUIET * 2, f"終端が遅すぎる: {fed}ms"
     assert done[0].reason == "silence"
     assert done[0].ms > 0
     assert len(done[0].pcm) == done[0].ms * SAMPLE_RATE * 2 // 1000
@@ -149,3 +169,54 @@ def test_the_noise_gate_covers_the_clap_residue_measured_in_the_field() -> None:
     assert MIN_UTTERANCE_MS < CLAP_RESIDUE_MS, "残響は VAD の下限では止まらない"
     assert CLAP_RESIDUE_MS <= NOISE_UTTERANCE_MS, "残響が物音として捨てられない"
     assert NOISE_UTTERANCE_MS < 1_000, "上げすぎ。本当の空振りまで黙ってしまう"
+
+
+def test_silence_target_is_chosen_by_the_noise_floor() -> None:
+    """終端の長さは暗騒音で決める。境目は QUIET_NOISE_RMS。"""
+    assert silence_target_ms(0.0) == SILENCE_MS_QUIET
+    assert silence_target_ms(QUIET_NOISE_RMS) == SILENCE_MS_QUIET
+    assert silence_target_ms(QUIET_NOISE_RMS + 1) == SILENCE_MS
+
+
+def test_room_noise_is_not_speech_but_raises_the_floor() -> None:
+    """検証に使う雑音の前提。声と判定されず、静かの境目より大きいこと。"""
+    frame = room_noise(FRAME_MS)
+    assert frame_rms(frame) > QUIET_NOISE_RMS
+    splitter = SpeechSplitter()
+    assert splitter.feed(room_noise(2_000)) == [], "雑音だけで発話にしない"
+    assert splitter.noise_rms > QUIET_NOISE_RMS, "暗騒音が上がっていない"
+
+
+def test_noisy_room_keeps_the_long_window() -> None:
+    """うるさい部屋では 1200ms のまま。短いほうで切ると文の途中で切れる。
+
+    終端の無音には**デジタルの無音を使う**。実測（2026-09-08）では、直前に大きい音が
+    あると webrtcvad はそのあとの白色雑音を声と判定し続け、雑音を流し続けても終端しない
+    （振幅 450〜1500 のいずれでも終端せず）。ここで見たいのは「暗騒音で選んだ長さが
+    効いているか」なので、判定が安定する無音で確かめる。
+    """
+    rng = random.Random(7)
+    splitter = SpeechSplitter()
+    splitter.feed(room_noise(2_000, rng=rng))      # 先に部屋の音を聞かせる
+    assert splitter.noise_rms > QUIET_NOISE_RMS
+    assert splitter.feed(tone(600)) == []
+    assert splitter.silence_target == SILENCE_MS, "うるさい部屋を静かと判定した"
+
+    fed = 0
+    done: list = []
+    while not done and fed < SILENCE_MS * 3:
+        done.extend(splitter.feed(silence(100)))
+        fed += 100
+
+    assert done, "無音を足しても終端しない"
+    assert fed >= SILENCE_MS, f"静かな部屋の長さで切れている: {fed}ms"
+
+
+def test_noise_floor_survives_an_utterance() -> None:
+    """部屋は発話1回で変わらない。reset で暗騒音まで捨てない。"""
+    splitter = SpeechSplitter()
+    splitter.feed(room_noise(2_000))
+    floor = splitter.noise_rms
+    splitter.feed(tone(600))
+    splitter.feed(room_noise(SILENCE_MS + 300))
+    assert splitter.noise_rms >= floor * 0.5, "発話のたびに暗騒音を測り直している"

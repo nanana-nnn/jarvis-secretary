@@ -170,6 +170,7 @@ jarvis-secretary/
 │   ├── clock.py                        # イベントに載せる時刻
 │   └── config.py                       # .env 読み込みと検証
 ├── tests/                              # pytest（server 側。test_lifecycle_regressions.py は切断・承認・競合の回帰検証）
+│   └── conftest.py                     # 既定で STT_WARMUP=0。テストでモデルを読みに行かせない
 ├── docs/
 │   ├── manual-setup.md                 # SETUP.md を手で叩く版
 │   ├── ASSETS.md                       # 同梱画像の出どころとライセンス除外
@@ -248,7 +249,7 @@ jarvis-secretary/
 | `APPROVAL_TIMEOUT_MS` | 120000 | 無操作で自動却下 |
 | `ERROR_AUTO_BACK_MS` | 5000 | ERROR から SLEEP へ |
 | `UTTERANCE_MAX_MS` | 30000 | 1発話の上限 |
-| `VAD_SILENCE_MS` | 1200 | 発話終端判定の無音長 |
+| `VAD_SILENCE_MS` | 700 / 1200 | 発話終端判定の無音長。**暗騒音で選ぶ**（静かなら 700、うるさければ 1200。境目は `QUIET_NOISE_RMS = 300`、2026-09-08） |
 
 ---
 
@@ -303,7 +304,9 @@ jarvis-secretary/
 
 1. セッションごとにリングバッファへ蓄積
 2. `webrtcvad`（モード 2、30ms フレーム）で発話区間を判定
-3. 発話開始後、**1,200ms 無音**で発話終了とみなす
+3. 発話開始後、無音が続いたら発話終了とみなす。長さは**発話の頭で暗騒音から決めて固定する**
+   （静かな部屋 700ms / うるさい部屋 1,200ms）。暗騒音は「webrtcvad が声と言わなかった
+   フレーム」の RMS の移動平均で測る。途中で長さを変えない（同じ無音が境目をまたいで揺れる）
 4. 1発話が **30秒**を超えたら強制的に終了させる
 5. 確定した区間を faster-whisper へ渡す
 
@@ -318,8 +321,15 @@ jarvis-secretary/
 | vad_filter | `True` |
 | beam_size | 5 |
 
-- モデルはサーバー起動時に一度だけロードし、常駐させる
+- モデルはサーバー起動時に一度だけロードし、常駐させる。**起動時に先読みする**
+  （2026-09-08。それまでは最初の1発話が `transcribe()` のロックの中でロードを待っていた）。
+  `STT_WARMUP=0` か `create_app(warmup=False)` で切れる
 - 途中経過は `audio.partial`、確定は `audio.final` で送る
+
+> **実測（2026-09-08）：webrtcvad は直前に大きい音があると、そのあとの白色雑音を
+> 声と判定し続ける。** 振幅 450〜1500 のいずれでも終端しなかった。うるさい部屋では
+> 終端が `UTTERANCE_MAX_MS` に張り付きうる、ということ。無音の長さを可変にしても
+> ここは改善しない（静かな部屋を速くするだけ）。直すなら VAD の手前で雑音を落とす。
 
 ---
 

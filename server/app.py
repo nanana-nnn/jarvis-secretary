@@ -50,7 +50,7 @@ wallpaper_version = wallpapers.current_version
 
 
 def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCHEME_PATH,
-               vault_path: Path = DEFAULT_VAULT_PATH) -> FastAPI:
+               vault_path: Path = DEFAULT_VAULT_PATH, warmup: bool | None = None) -> FastAPI:
     config = settings or Settings.from_env()
     hub = Hub(vault_path, scheme_path)
     # 書き起こしはモデルを常駐させるのでアプリに1つだけ持つ（§8）
@@ -58,6 +58,11 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     # エージェントは同時1ジョブ（§10）。アプリで1つ持って直列化する
     # JARVISの作業はPC画面で見えることが要件。画面のある実機ではCodexを
     # 常駐ターミナルへ流し、CIや画面なしのテストでは従来の直接実行に戻す。
+    # 書き起こしモデルは初回の transcribe() で読み込まれる。**最初の1発話を待たせない**
+    # ため、起動と同時にワーカースレッドで読む（2026-09-08）。テストや、モデルを
+    # 落としたくない環境では STT_WARMUP=0、あるいは warmup=False で切る
+    if warmup is None:
+        warmup = os.getenv("STT_WARMUP") != "0"
     visible_terminal = bool(os.getenv("WAYLAND_DISPLAY") or os.getenv("DISPLAY"))
     agent = CodexAgent(vault_path, visible=visible_terminal)
     approvals = ApprovalStore(vault_path, config.log_path)
@@ -74,8 +79,11 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
         app.state.settings = config
         # 承認待ちの一覧。承認は WS ではなく HTTP で来るので、外から見える所に置く
         app.state.pending = approvals.pending
-        tasks = (asyncio.create_task(hub.watch_scheme()),
-                 asyncio.create_task(hub.push_telemetry()))
+        tasks = [asyncio.create_task(hub.watch_scheme()),
+                 asyncio.create_task(hub.push_telemetry())]
+        if warmup:
+            # load() は中で例外を握るので、ここが失敗して起動が止まることはない
+            tasks.append(asyncio.create_task(asyncio.to_thread(transcriber.load)))
         # **先読みブリーフィングは動かさない**（2026-09-04、2026-09-05 に削除）。
         # 「今日のタスク」を Codex へ通す方針にしたので、先読みキャッシュを
         # 読む相手がいなくなった。動かしたままだと Vault のファイルが変わるたび
