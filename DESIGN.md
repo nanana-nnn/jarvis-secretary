@@ -26,8 +26,8 @@ iPhone 13 Pro を常設AI秘書端末にし、音声で Obsidian Vault と Codex
 | 端末 | iPhone 13 Pro / iOS Safari・PWA |
 | 設置 | 縦向き・給電・スタンド常設 |
 | ネットワーク | 同一Wi-Fi内のみ。ポート開放しない |
-| Vault実パス | `/home/haru/ドキュメント/Start Vault`（`.env` で指定） |
-| リポジトリ | `~/dev/jarvis-secretary/`（Vault の外） |
+| Vault実パス | `.env` の `VAULT_PATH` で指す（作者の環境では日本語パスの Obsidian Vault） |
+| リポジトリ | Vault の外に置く |
 
 **Vault のファイルをこのリポジトリへコピーしない。** サーバーは実パスを参照する。
 
@@ -171,6 +171,8 @@ jarvis-secretary/
 │   └── config.py                       # .env 読み込みと検証
 ├── tests/                              # pytest（server 側。test_lifecycle_regressions.py は切断・承認・競合の回帰検証）
 ├── docs/
+│   ├── manual-setup.md                 # SETUP.md を手で叩く版
+│   ├── ASSETS.md                       # 同梱画像の出どころとライセンス除外
 │   ├── phase-0-1-acceptance.md
 │   └── archive/                        # 実装の根拠にしない過去の検討
 ├── examples/                           # 実際に通した入出力の控え
@@ -178,8 +180,11 @@ jarvis-secretary/
 │   ├── gen-cert.sh                     # LAN 用自己署名証明書
 │   └── serve-local.sh                  # 外出先で 127.0.0.1 に建てる
 ├── .env.example
-├── AGENTS.md
+├── AGENTS.md                           # 改造するAI向けの作業ルール
+├── SETUP.md                            # セットアップ（AIが実行する前提）
+├── CONTRIBUTING.md
 ├── DESIGN.md
+├── LICENSE                             # MIT（画像は対象外＝docs/ASSETS.md）
 └── README.md
 ```
 
@@ -494,10 +499,13 @@ MVP は**同一 Wi-Fi 内限定**。
 
 - PC は LAN アドレスで待ち受ける（`0.0.0.0` ではなく LAN IP を明示）
 - iOS のマイク許可は **secure context 必須**。LAN IP では `http://` が secure context にならないため、`scripts/gen-cert.sh` で自己署名証明書を作り **HTTPS/WSS** で待ち受け、iPhone に証明書を信頼させる
-- 初回に PC 画面へ QR コードを表示してペアリングする（`scripts/show-qr.py`）
-- QR には**有効期限 5 分**のペアリングトークンを含める
-- `/pair` で端末固有トークンへ交換し、iPhone の `localStorage` に保存する
-- 以後の HTTP / WS は端末トークン必須
+**以下の4行は未実装（2026-09-08 時点）。** `scripts/show-qr.py` も `/pair` も無い。
+実際に効いているのは CORS と WS の Origin チェックだけで、**端末認証は無い**（SETUP.md §11）。
+
+- ~~初回に PC 画面へ QR コードを表示してペアリングする（`scripts/show-qr.py`）~~
+- ~~QR には**有効期限 5 分**のペアリングトークンを含める~~
+- ~~`/pair` で端末固有トークンへ交換し、iPhone の `localStorage` に保存する~~
+- ~~以後の HTTP / WS は端末トークン必須~~
 - CORS は登録済みの iPhone UI オリジンだけ許可
 - **インターネットへポート開放しない。** UPnP・ポートフォワードを設定しない
 - 外出先対応は MVP 後。必要なら Tailscale を検討し、公開 URL 方式にはしない
@@ -505,6 +513,9 @@ MVP は**同一 Wi-Fi 内限定**。
 ---
 
 ## 14. 設定（`.env.example`）
+
+**正本は `.env.example` の実物。** 下は設計時の骨組みで、
+キー名は一部変わっている（`AGENT`/`CODEX_CMD` → `AGENT_CMD`、`WHISPER_MODEL` の既定は `small`）。
 
 ```dotenv
 # --- ネットワーク ---
@@ -515,7 +526,7 @@ TLS_KEY=./certs/lan.key
 ALLOWED_ORIGINS=https://192.168.0.x:5173
 
 # --- Vault ---
-VAULT_PATH=/home/haru/ドキュメント/Start Vault
+VAULT_PATH=/path/to/your/vault
 
 # --- 音声認識 ---
 WHISPER_MODEL=large-v3

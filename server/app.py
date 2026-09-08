@@ -42,8 +42,9 @@ from .scheme import read_primary, read_scheme, scheme_event  # noqa: F401
 
 logger = logging.getLogger("uvicorn.error")
 
-# 判断・記録の正本（AI_RULES.md の Vault）。VAULT_PATH で差し替えられる
-DEFAULT_VAULT_PATH = Path(os.getenv("VAULT_PATH") or Path.home() / "ドキュメント/Start Vault")
+# 判断・記録の正本。**`.env` の `VAULT_PATH` で必ず指す。**
+# 既定は当てにしないこと（公開リポジトリなので、作者の実パスは置かない）
+DEFAULT_VAULT_PATH = Path(os.getenv("VAULT_PATH") or Path.home() / "Documents/Vault")
 
 wallpaper_version = wallpapers.current_version
 
@@ -64,6 +65,9 @@ def create_app(settings: Settings | None = None, scheme_path: Path = DEFAULT_SCH
     # 実行時に load_dotenv で読むので /proc/<pid>/environ には出ない）
     logger.info("[AGENT] %s", agent.command)
     logger.info("[AGENT] sandbox read=%s write=%s", agent.sandbox_read, agent.sandbox_write)
+    # VAULT_PATH の指し先が無いと、読み取りは黙って空を返す。起動時に一度だけ言う
+    if not vault_path.is_dir():
+        logger.warning("[VAULT] %s が見つからない。.env の VAULT_PATH を確認する", vault_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
